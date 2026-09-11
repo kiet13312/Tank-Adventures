@@ -58,7 +58,7 @@ public class TankGameView extends View {
         Iterator<Projectile> it=shots.iterator(); while(it.hasNext())if(it.next().dead)it.remove();
     }
 
-    // Tank Adventures damage model: raw attack -> armor mitigation -> HP.
+    // Original damage model: attack is reduced by armor, then remaining damage hits HP.
     void applyDamage(Tank t,int attack){
         int absorbed=Math.min(t.armor,Math.round(attack*.45f));
         t.armor-=absorbed;
@@ -112,7 +112,12 @@ public class TankGameView extends View {
         static Projectile fire(float x,float y,float a,float speed,int damage,Tank owner){
             Projectile z=new Projectile();z.x=x;z.y=y;z.vx=(float)Math.cos(a)*speed;z.vy=(float)Math.sin(a)*speed;z.damage=damage;z.owner=owner;return z;
         }
-        void draw(Canvas c){if(dead)return;p.setColor(Color.argb(130,255,180,50));c.drawCircle(x,y,16,p);p.setColor(Color.rgb(250,235,100));c.drawCircle(x,y,9,p);}
+        void draw(Canvas c){
+            if(dead)return;
+            Paint q=new Paint(Paint.ANTI_ALIAS_FLAG);
+            q.setColor(Color.argb(130,255,180,50));c.drawCircle(x,y,16,q);
+            q.setColor(Color.rgb(250,235,100));c.drawCircle(x,y,9,q);
+        }
     }
 
     class Tank{
