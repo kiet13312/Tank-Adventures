@@ -1,21 +1,26 @@
 package com.alpvz.tankadventures;
 
 import android.app.Activity;
-import android.os.Bundle;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
-import android.graphics.drawable.Drawable;
+import android.os.Bundle;
 import android.view.MotionEvent;
 import android.view.View;
+
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.Random;
 
+/**
+ * Side-scrolling arcade vehicle demo inspired by hill-climb mobile gameplay.
+ * Rolling terrain, vehicle tilt, springy wheels, camera follow, pickups,
+ * hazards, shop and 15 campaign levels are all rendered with Canvas.
+ */
 public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
@@ -23,78 +28,247 @@ public class MainActivity extends Activity {
         setContentView(new GameView(this));
     }
 
-    static class GameView extends View {
-        static final int LEVELS=15, ENEMIES=15;
-        static final long LEVEL_TIME=60000L, FIRE_TIME=3000L;
-        final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG); final Random rnd=new Random();
-        final SharedPreferences prefs; final Drawable bulletImage;
-        final int[] HP={500,800,1100,1500};
-        final float[] SPEED={3.6f,3.9f,4.2f,4.5f};
-        final int[] COST={0,1000,2000,3000};
-        final String[] NAME={"Scout","Panzer","Tiger","Titan"};
-        final ArrayList<Enemy> enemies=new ArrayList<>();
-        final ArrayList<Bullet> bullets=new ArrayList<>();
-        final ArrayList<Crate> crates=new ArrayList<>();
-        int coins,unlockedLevel,wins,ownedTank,selectedTank,currentLevel=1;
-        int playerHp,spawned; long start,lastShot,lastSpawn,lastCrate,bigUntil;
-        float px,py,vx,vy,angle,mbx,mby,mkx,mky,abx,aby,akx,aky;
-        boolean moveTouch,aimTouch,playing,win,lose,shop,levels;
+    static final class GameView extends View {
+        static final int LEVELS = 15;
+        static final long LEVEL_TIME = 60000L;
+        static final float GRAVITY = 0.48f;
 
-        GameView(Context c){super(c); prefs=c.getSharedPreferences("tank_adventures",0);
-            bulletImage=getResources().getDrawable(R.drawable.bullet,null);
-            coins=prefs.getInt("coins",0); unlockedLevel=clampI(prefs.getInt("unlocked",1),1,15);
-            wins=clampI(prefs.getInt("wins",0),0,1); ownedTank=clampI(prefs.getInt("owned",0),0,3);
-            selectedTank=clampI(prefs.getInt("selected",0),0,ownedTank); p.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);}
-        void save(){prefs.edit().putInt("coins",coins).putInt("unlocked",unlockedLevel).putInt("wins",wins).putInt("owned",ownedTank).putInt("selected",selectedTank).apply();}
-        @Override protected void onDraw(Canvas c){int w=getWidth(),h=getHeight();
-            if(playing){update(); battle(c,w,h);} else if(win||lose){arena(c,w,h);objects(c);result(c,w,h);}
-            else {background(c,w,h); if(shop) shop(c,w,h); else if(levels) levels(c,w,h); else menu(c,w,h);} postInvalidateDelayed(16);}
+        final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Path path = new Path();
+        final Random rnd = new Random(7);
+        final SharedPreferences prefs;
 
-        void background(Canvas c,int w,int h){c.drawColor(Color.rgb(62,88,60));p.setColor(Color.rgb(76,103,72));c.drawRect(0,0,w,h,p);
-            p.setColor(Color.rgb(66,91,63));for(int x=0;x<w;x+=80)for(int y=0;y<h;y+=80)c.drawRect(x+2,y+2,x+77,y+77,p);}
-        void arena(Canvas c,int w,int h){c.drawColor(Color.rgb(94,92,75));p.setColor(Color.rgb(74,92,67));for(int x=0;x<w;x+=72)for(int y=0;y<h;y+=72)c.drawRect(x+2,y+2,x+69,y+69,p);
-            p.setColor(Color.rgb(126,119,89));c.drawRect(0,0,58,h,p);txt(c,"BASE",29,h/2f,13,Color.WHITE,true,true);}
-        void menu(Canvas c,int w,int h){txt(c,"TANK ADVENTURES",w/2,65,42,Color.WHITE,true,true);txt(c,"Xu: "+coins+"    Xe: "+NAME[selectedTank],w/2,105,20,Color.WHITE,true,true);txt(c,"Màn mở: "+unlockedLevel+"/15",w/2,135,18,Color.WHITE,true,true);
-            btn(c,w/2-155,165,w/2+155,220,"CHƠI MÀN "+currentLevel);btn(c,w/2-155,235,w/2+155,290,"CHỌN MÀN");btn(c,w/2-155,305,w/2+155,360,"CỬA HÀNG");txt(c,"Sống sót đủ 60 giây để hoàn thành màn.",w/2,h-30,16,Color.WHITE,true,true);}
-        void shop(Canvas c,int w,int h){txt(c,"CỬA HÀNG XE",w/2,40,31,Color.WHITE,true,true);txt(c,"Xu: "+coins,w/2,70,19,Color.WHITE,true,true);
-            for(int i=0;i<4;i++){float x=105+i*180; tank(c,x,165,i,1);txt(c,NAME[i],x,245,18,Color.WHITE,true,true);txt(c,"HP "+HP[i]+" | Tốc "+SPEED[i],x,268,14,Color.WHITE,true,true);String s=ownedTank>=i?(selectedTank==i?"ĐANG DÙNG":"DÙNG"):"MUA "+COST[i];btn(c,x-68,285,x+68,335,s);}btn(c,20,h-55,140,h-12,"QUAY LẠI");}
-        void levels(Canvas c,int w,int h){txt(c,"CHỌN MÀN",w/2,40,31,Color.WHITE,true,true);for(int i=1;i<=15;i++){int q=i-1,col=q%5,row=q/5;float x=105+col*155,y=80+row*80;btn(c,x-50,y,x+50,y+50,i<=unlockedLevel?""+i:"KHÓA");}txt(c,"Mỗi màn: 60 giây • 15 xe",w/2,h-60,16,Color.WHITE,true,true);btn(c,20,h-50,140,h-12,"QUAY LẠI");}
-        void battle(Canvas c,int w,int h){arena(c,w,h);objects(c);long left=Math.max(0,(LEVEL_TIME-(System.currentTimeMillis()-start)+999)/1000);p.setColor(Color.argb(205,0,0,0));c.drawRect(0,0,w,48,p);txtL(c,"TANK ADVENTURES",12,30,18,Color.WHITE);txtL(c,"MÀN "+currentLevel+" | XE "+spawned+"/15",190,30,16,Color.WHITE);txtR(c,"HP "+playerHp+"/"+HP[selectedTank],w-12,21,15,Color.WHITE);txtR(c,"THỜI GIAN "+left+"s",w-12,42,14,Color.WHITE);
-            p.setColor(Color.DKGRAY);c.drawRect(340,9,500,19,p);p.setColor(Color.GREEN);c.drawRect(340,9,340+160*Math.max(0,Math.min(1,playerHp/(float)HP[selectedTank])),19,p);
-            float by=h-100; p.setColor(Color.argb(95,20,20,20));c.drawCircle(105,by,72,p);c.drawCircle(w-105,by,72,p);p.setColor(Color.argb(150,210,210,210));c.drawCircle(moveTouch?mkx:105,moveTouch?mky:by,28,p);c.drawCircle(aimTouch?akx:w-105,aimTouch?aky:by,28,p);txt(c,"HIỆU ỨNG",w-105,by+5,14,Color.WHITE,true,true);}
+        final int[] HP = {500, 800, 1100, 1500};
+        final float[] SPEED = {4.4f, 4.8f, 5.2f, 5.7f};
+        final int[] COST = {0, 1000, 2000, 3000};
+        final String[] NAME = {"Scout", "Panzer", "Tiger", "Titan"};
 
-        void objects(Canvas c){for(Enemy e:enemies)drawEnemy(c,e);for(Bullet b:bullets)drawBullet(c,b);
-            for(Crate q:crates){p.setColor(Color.rgb(153,105,45));c.drawRect(q.x-18,q.y-18,q.x+18,q.y+18,p);p.setColor(Color.YELLOW);c.drawRect(q.x-4,q.y-18,q.x+4,q.y+18,p);txt(c,q.type==0?"+":"*",q.x,q.y+8,22,Color.WHITE,true,true);}tank(c,px,py,selectedTank,1);}
-        void drawBullet(Canvas c,Bullet b){float a=(float)Math.atan2(b.vy,b.vx);c.save();c.rotate((float)Math.toDegrees(a),b.x,b.y);int sz=b.big?42:32;bulletImage.setBounds((int)b.x-sz/2,(int)b.y-sz/4,(int)b.x+sz/2,(int)b.y+sz/4);bulletImage.draw(c);c.restore();}
-        void tank(Canvas c,float x,float y,int type,float s){float bw=58*s,bh=40*s;int[] col={Color.rgb(42,155,65),Color.rgb(31,119,52),Color.rgb(22,98,40),Color.rgb(15,75,31)};p.setColor(Color.BLACK);c.drawRoundRect(new RectF(x-bw/2-6,y-bh/2-4,x+bw/2+6,y+bh/2+4),8,8,p);p.setColor(col[type]);c.drawRoundRect(new RectF(x-bw/2,y-bh/2,x+bw/2,y+bh/2),8,8,p);p.setColor(Color.rgb(30,75,35));c.drawCircle(x,y,17*s,p);p.setStrokeWidth(9*s);p.setStrokeCap(Paint.Cap.ROUND);p.setColor(Color.rgb(23,55,27));c.drawLine(x,y,x+(float)Math.cos(angle)*38*s,y+(float)Math.sin(angle)*38*s,p);p.setStrokeCap(Paint.Cap.BUTT);}
-        void drawEnemy(Canvas c,Enemy e){p.setColor(Color.BLACK);float s=e.boss?1.35f:1;c.drawRoundRect(new RectF(e.x-32*s,e.y-23*s,e.x+32*s,e.y+23*s),8,8,p);p.setColor(e.boss?Color.rgb(95,95,95):Color.rgb(125,125,125));c.drawRoundRect(new RectF(e.x-28*s,e.y-19*s,e.x+28*s,e.y+19*s),8,8,p);p.setColor(Color.rgb(80,80,80));c.drawCircle(e.x,e.y,13*s,p);}
+        final ArrayList<Pickup> pickups = new ArrayList<>();
+        final ArrayList<Rock> rocks = new ArrayList<>();
 
-        void update(){long now=System.currentTimeMillis();if(playerHp<=0){endLose();return;}if(now-start>=LEVEL_TIME){endWin();return;}
-            if(now-lastShot>=FIRE_TIME){firePlayer();lastShot=now;}if(spawned<ENEMIES&&now-lastSpawn>=2000){spawn();spawned++;lastSpawn=now;}if(now-lastCrate>=7000){crate();lastCrate=now;}move();bullets();enemies();collect();}
-        void move(){float max=SPEED[selectedTank];if(moveTouch){float dx=mkx-mbx,dy=mky-mby,len=(float)Math.hypot(dx,dy);if(len>3){float f=Math.min(1,len/60);vx+=dx/Math.max(1,len)*.22f*f;vy+=dy/Math.max(1,len)*.22f*f;}}else{vx*=.90f;vy*=.90f;}float s=(float)Math.hypot(vx,vy);if(s>max){vx*=max/s;vy*=max/s;}px=clamp(px+vx,75,getWidth()-75);py=clamp(py+vy,75,getHeight()-85);if(aimTouch&&Math.hypot(akx-abx,aky-aby)>8)angle=(float)Math.atan2(aky-aby,akx-abx);}
-        void firePlayer(){boolean big=bigUntil>System.currentTimeMillis();float x=px+(float)Math.cos(angle)*44,y=py+(float)Math.sin(angle)*44,s=big?11:10;bullets.add(new Bullet(x,y,(float)Math.cos(angle)*s,(float)Math.sin(angle)*s,true,big));}
-        void spawn(){Enemy e=new Enemy();e.x=getWidth()-80;e.y=75+rnd.nextInt(Math.max(1,getHeight()-160));e.speed=Math.max(.7f,SPEED[selectedTank]*.58f);if(currentLevel==15&&spawned==14){e.boss=true;e.x=getWidth()-130;e.y=getHeight()/2f;e.speed=0;}enemies.add(e);}
-        void crate(){Crate q=new Crate();q.x=90+rnd.nextInt(Math.max(1,getWidth()-180));q.y=75+rnd.nextInt(Math.max(1,getHeight()-150));q.type=rnd.nextBoolean()?0:1;crates.add(q);}
-        void bullets(){Iterator<Bullet> it=bullets.iterator();while(it.hasNext()){Bullet b=it.next();b.x+=b.vx;b.y+=b.vy;if(b.x<45||b.x>getWidth()-20||b.y<45||b.y>getHeight()-20)it.remove();}}
-        void enemies(){long now=System.currentTimeMillis();for(Enemy e:enemies){if(!e.boss){float dx=px-e.x,dy=py-e.y,len=(float)Math.hypot(dx,dy);if(len>95){e.x+=dx/Math.max(1,len)*e.speed;e.y+=dy/Math.max(1,len)*e.speed;}}if(now-e.lastShot>=FIRE_TIME){fireEnemy(e);e.lastShot=now;}if(dist(e.x,e.y,px,py)<48&&now-e.lastContact>=1000){playerHp-=25;e.lastContact=now;}}}
-        void fireEnemy(Enemy e){float dx=px-e.x,dy=py-e.y,len=Math.max(1,(float)Math.hypot(dx,dy));bullets.add(new Bullet(e.x,e.y,dx/len*7,dy/len*7,false,false));}
-        void collect(){Iterator<Crate> it=crates.iterator();while(it.hasNext()){Crate q=it.next();if(dist(px,py,q.x,q.y)<48){if(q.type==0)playerHp=HP[selectedTank];else bigUntil=System.currentTimeMillis()+60000;it.remove();}}}
-        void endLose(){playing=false;lose=true;}
-        void endWin(){if(!playing)return;playing=false;win=true;coins+=100;wins++;if(wins>=2){wins=0;if(currentLevel<15)unlockedLevel=Math.max(unlockedLevel,currentLevel+1);}save();}
+        int coins, unlockedLevel, wins, ownedTank, selectedTank;
+        int level = 1, hp, runCoins;
+        float worldX, y, vx, vy, angle, wheelSpin, bounce, cameraX;
+        float joyBaseX = 105, joyBaseY, joyKnobX = 105, joyKnobY;
+        long startTime, lastMs;
+        boolean playing, resultWin, resultLose, shop, levels;
+        boolean leftPressed, rightPressed, boostPressed;
+        float touchDownX, touchDownY;
 
-        void result(Canvas c,int w,int h){p.setColor(Color.argb(210,0,0,0));c.drawRect(0,0,w,h,p);if(win){txt(c,currentLevel==15?"HOÀN THÀNH!":"THẮNG!",w/2,h/2-55,45,Color.GREEN,true,true);txt(c,"+100 XU • "+wins+"/2 lần thắng",w/2,h/2-15,21,Color.WHITE,true,true);txt(c,currentLevel==15?"Đã hoàn thành 15 màn":(unlockedLevel>currentLevel?"Đã mở màn "+unlockedLevel:"Cần thắng thêm 1 lần để mở màn "+(currentLevel+1)),w/2,h/2+20,17,Color.WHITE,true,true);btn(c,w/2-125,h/2+50,w/2+125,h/2+105,currentLevel==15?"VỀ MENU":"CHƠI LẠI");}else{txt(c,"THUA!",w/2,h/2-25,46,Color.RED,true,true);btn(c,w/2-125,h/2+50,w/2+125,h/2+105,"CHƠI LẠI");}}
+        GameView(Context c) {
+            super(c);
+            prefs = c.getSharedPreferences("tank_adventures", 0);
+            coins = Math.max(0, prefs.getInt("coins", 0));
+            unlockedLevel = clampI(prefs.getInt("unlocked", 1), 1, LEVELS);
+            wins = clampI(prefs.getInt("wins", 0), 0, 1);
+            ownedTank = clampI(prefs.getInt("owned", 0), 0, 3);
+            selectedTank = clampI(prefs.getInt("selected", 0), 0, ownedTank);
+            p.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        }
 
-        @Override public boolean onTouchEvent(MotionEvent e){float x=e.getX(),y=e.getY();int a=e.getAction();if(a==MotionEvent.ACTION_DOWN){if(playing){if(x<getWidth()/2&&y>getHeight()-200){moveTouch=true;mbx=105;mby=getHeight()-100;setMove(x,y);}else if(x>=getWidth()/2&&y>getHeight()-200){aimTouch=true;abx=getWidth()-105;aby=getHeight()-100;setAim(x,y);}}else if(win||lose){if(inside(x,y,getWidth()/2-140,getHeight()/2+40,getWidth()/2+140,getHeight()/2+125)){win=false;lose=false;startLevel(currentLevel);}}else if(shop)shopTap(x,y);else if(levels)levelTap(x,y);else menuTap(x,y);return true;}if(playing&&(a==MotionEvent.ACTION_MOVE||a==MotionEvent.ACTION_UP)){if(moveTouch)setMove(x,y);if(aimTouch)setAim(x,y);if(a==MotionEvent.ACTION_UP){moveTouch=false;aimTouch=false;}return true;}return true;}
-        void setMove(float x,float y){float dx=x-mbx,dy=y-mby,l=(float)Math.hypot(dx,dy);if(l>60){dx*=60/l;dy*=60/l;}mkx=mbx+dx;mky=mby+dy;}
-        void setAim(float x,float y){float dx=x-abx,dy=y-aby,l=(float)Math.hypot(dx,dy);if(l>60){dx*=60/l;dy*=60/l;}akx=abx+dx;aky=aby+dy;}
-        void menuTap(float x,float y){float w=getWidth();if(inside(x,y,w/2-155,165,w/2+155,220))startLevel(Math.min(currentLevel,unlockedLevel));else if(inside(x,y,w/2-155,235,w/2+155,290)){levels=true;}else if(inside(x,y,w/2-155,305,w/2+155,360))shop=true;}
-        void shopTap(float x,float y){int h=getHeight();if(inside(x,y,20,h-55,140,h-12)){shop=false;return;}for(int i=0;i<4;i++){float cx=105+i*180;if(inside(x,y,cx-68,285,cx+68,335)){if(ownedTank>=i){selectedTank=i;save();}else if(i==ownedTank+1&&coins>=COST[i]){coins-=COST[i];ownedTank=i;selectedTank=i;save();}}}}
-        void levelTap(float x,float y){int h=getHeight();if(inside(x,y,20,h-50,140,h-12)){levels=false;return;}for(int i=1;i<=15;i++){int q=i-1,col=q%5,row=q/5;float cx=105+col*155,cy=80+row*80;if(inside(x,y,cx-50,cy,cx+50,cy+50)){if(i<=unlockedLevel){currentLevel=i;levels=false;}return;}}}
-        void startLevel(int l){currentLevel=clampI(l,1,unlockedLevel);playing=true;win=lose=shop=levels=false;playerHp=HP[selectedTank];px=getWidth()/2f;py=getHeight()/2f;vx=vy=0;angle=0;spawned=0;enemies.clear();bullets.clear();crates.clear();long n=System.currentTimeMillis();start=n;lastShot=n;lastSpawn=n-1800;lastCrate=n;bigUntil=0;mbx=105;mby=getHeight()-100;mkx=mbx;mky=mby;abx=getWidth()-105;aby=getHeight()-100;akx=abx;aky=aby;moveTouch=aimTouch=false;}
-        void btn(Canvas c,float l,float t,float r,float b,String s){p.setColor(Color.rgb(42,55,45));c.drawRoundRect(new RectF(l+2,t+2,r+2,b+2),10,10,p);p.setColor(Color.rgb(75,112,78));c.drawRoundRect(new RectF(l,t,r,b),10,10,p);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2);p.setColor(Color.WHITE);c.drawRoundRect(new RectF(l,t,r,b),10,10,p);p.setStyle(Paint.Style.FILL);txt(c,s,(l+r)/2,(t+b)/2+6,16,Color.WHITE,true,true);}
-        void txt(Canvas c,String s,float x,float y,float z,int color,boolean bold,boolean center){p.setTextSize(z);p.setColor(color);p.setTypeface(bold?android.graphics.Typeface.DEFAULT_BOLD:android.graphics.Typeface.DEFAULT);p.setTextAlign(center?Paint.Align.CENTER:Paint.Align.LEFT);c.drawText(s,x,y,p);}
-        void txtL(Canvas c,String s,float x,float y,float z,int color){txt(c,s,x,y,z,color,true,false);} void txtR(Canvas c,String s,float x,float y,float z,int color){p.setTextSize(z);p.setColor(color);p.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);p.setTextAlign(Paint.Align.RIGHT);c.drawText(s,x,y,p);}
-        static boolean inside(float x,float y,float l,float t,float r,float b){return x>=l&&x<=r&&y>=t&&y<=b;} static float dist(float a,float b,float c,float d){return (float)Math.hypot(a-c,b-d);}static float clamp(float v,float a,float b){return Math.max(a,Math.min(b,v));}static int clampI(int v,int a,int b){return Math.max(a,Math.min(b,v));}
-        static class Enemy{float x,y,speed;long lastShot,lastContact;boolean boss;} static class Bullet{float x,y,vx,vy;boolean player,big;Bullet(float X,float Y,float VX,float VY,boolean P,boolean B){x=X;y=Y;vx=VX;vy=VY;player=P;big=B;}} static class Crate{float x,y;int type;}
+        void save() {
+            prefs.edit().putInt("coins", coins).putInt("unlocked", unlockedLevel)
+                    .putInt("wins", wins).putInt("owned", ownedTank)
+                    .putInt("selected", selectedTank).apply();
+        }
+
+        @Override protected void onDraw(Canvas c) {
+            int w = getWidth(), h = getHeight();
+            if (playing) {
+                update();
+                drawGame(c, w, h);
+            } else if (resultWin || resultLose) {
+                drawGame(c, w, h);
+                drawResult(c, w, h);
+            } else {
+                drawMenuBackground(c, w, h);
+                if (shop) drawShop(c, w, h);
+                else if (levels) drawLevels(c, w, h);
+                else drawMenu(c, w, h);
+            }
+            postInvalidateDelayed(16);
+        }
+
+        void drawMenuBackground(Canvas c, int w, int h) {
+            c.drawColor(Color.rgb(85, 170, 224));
+            p.setColor(Color.rgb(135, 205, 244));
+            c.drawCircle(w * .17f, h * .19f, 75, p);
+            c.drawCircle(w * .78f, h * .16f, 105, p);
+            p.setColor(Color.rgb(88, 147, 62));
+            path.reset(); path.moveTo(0, h);
+            for (int x = 0; x <= w; x += 10) path.lineTo(x, terrainY(x + 300, h) + 10);
+            path.lineTo(w, h); path.close(); c.drawPath(path, p);
+        }
+
+        void drawMenu(Canvas c, int w, int h) {
+            txt(c, "TANK ADVENTURES", w/2f, 58, 40, Color.WHITE, true);
+            txt(c, "Địa hình đồi • nghiêng theo dốc • camera bám xe", w/2f, 91, 17, Color.WHITE, true);
+            txt(c, "Xu: " + coins + "    Xe: " + NAME[selectedTank], w/2f, 128, 19, Color.WHITE, true);
+            btn(c,w/2f-170,160,w/2f+170,215,"CHƠI MÀN "+level);
+            btn(c,w/2f-170,227,w/2f+170,282,"CHỌN MÀN");
+            btn(c,w/2f-170,294,w/2f+170,349,"CỬA HÀNG XE");
+            tank(c,w/2f,h-125,selectedTank,1.8f,0);
+            txt(c,"Thu thập xu • né đá • sống sót 60 giây",w/2f,h-22,15,Color.WHITE,true);
+        }
+
+        void drawShop(Canvas c, int w, int h) {
+            txt(c,"CỬA HÀNG XE",w/2f,38,30,Color.WHITE,true);
+            txt(c,"Xu: "+coins,w/2f,67,18,Color.WHITE,true);
+            for(int i=0;i<4;i++){
+                float x=100+i*180;
+                tank(c,x,150,i,1,0);
+                txt(c,NAME[i],x,218,18,Color.WHITE,true);
+                txt(c,"Độ bền "+HP[i]+" • Tốc "+SPEED[i],x,242,13,Color.WHITE,true);
+                String s=ownedTank>=i?(selectedTank==i?"ĐANG DÙNG":"DÙNG"):"MUA "+COST[i];
+                btn(c,x-70,262,x+70,312,s);
+            }
+            btn(c,20,h-52,145,h-12,"QUAY LẠI");
+        }
+
+        void drawLevels(Canvas c,int w,int h){
+            txt(c,"CHỌN MÀN",w/2f,38,30,Color.WHITE,true);
+            for(int i=1;i<=LEVELS;i++){
+                int q=i-1,col=q%5,row=q/5;float x=95+col*158,y0=78+row*72;
+                btn(c,x-48,y0,x+48,y0+48,i<=unlockedLevel?""+i:"KHÓA");
+            }
+            txt(c,"Thắng một màn 2 lần để mở màn kế tiếp.",w/2f,h-62,15,Color.WHITE,true);
+            btn(c,20,h-50,145,h-12,"QUAY LẠI");
+        }
+
+        void startLevel(int lv){
+            level=clampI(lv,1,LEVELS); playing=true; resultWin=false; resultLose=false; shop=false; levels=false;
+            hp=HP[selectedTank];runCoins=0;worldX=90;y=0;vx=0;vy=0;angle=0;cameraX=0;wheelSpin=0;bounce=0;
+            pickups.clear();rocks.clear();buildLevelObjects();startTime=System.currentTimeMillis();lastMs=startTime;
+        }
+
+        void buildLevelObjects(){
+            rnd.setSeed(level*99173L+selectedTank*37L);float x=480;
+            for(int i=0;i<45;i++){
+                x+=170+rnd.nextInt(330);
+                Pickup q=new Pickup();q.x=x;q.yOffset=-30-rnd.nextInt(80);q.type=(i%9==0)?1:0;pickups.add(q);
+                if(i%3==1){Rock r=new Rock();r.x=x+90;r.radius=14+rnd.nextInt(12);rocks.add(r);}
+            }
+        }
+
+        void update(){
+            long now=System.currentTimeMillis();
+            float dt=Math.min(2.2f,Math.max(.25f,(now-lastMs)/16.6667f));lastMs=now;
+            if(hp<=0){endLose();return;} if(now-startTime>=LEVEL_TIME){endWin();return;}
+            float steer=0; if(leftPressed)steer-=1;if(rightPressed)steer+=1;
+            if(Math.abs(joyKnobX-joyBaseX)>8)steer=clamp((joyKnobX-joyBaseX)/58f,-1,1);
+            float accel=.085f*(1+selectedTank*.08f);
+            if(steer>.08f)vx+=accel*dt; else if(steer<-.08f)vx-=accel*dt; else vx*=Math.pow(.986,dt);
+            if(boostPressed)vx+=.045f*dt;
+            float max=SPEED[selectedTank]*(boostPressed?1.23f:1);
+            if(vx>max)vx=max;if(vx<-max*.45f)vx=-max*.45f;
+            worldX+=vx*dt*1.65f;if(worldX<80)worldX=80;
+
+            float ground=terrainY(worldX,getHeight()),targetY=ground-42;
+            vy+=GRAVITY*dt;y+=vy*dt;
+            if(y>=targetY){float impact=Math.abs(vy);if(impact>8){hp-=Math.min(70,(int)(impact*4.2f));bounce=Math.min(1,impact/15);}y=targetY;vy=-Math.min(5,impact*.22f);}
+            float slope=terrainY(worldX+25,getHeight())-terrainY(worldX-25,getHeight());angle=(float)Math.atan2(slope,50);
+            wheelSpin+=vx*dt*.15f;bounce*=.92f;
+            cameraX+=((worldX-getWidth()*.32f)-cameraX)*.10f;if(cameraX<0)cameraX=0;
+            collectPickups();collideRocks();
+        }
+
+        void collectPickups(){
+            for(Pickup q:pickups){if(q.taken)continue;float sy=terrainY(q.x,getHeight())+q.yOffset;
+                if(dist(worldX,y,q.x,sy)<58){q.taken=true;if(q.type==0){coins+=10;runCoins+=10;}else{hp=Math.min(HP[selectedTank],hp+140);runCoins+=25;}}}
+        }
+
+        void collideRocks(){
+            for(Rock r:rocks)if(Math.abs(r.x-worldX)<48){float ry=terrainY(r.x,getHeight())-r.radius+3;
+                if(dist(worldX,y+22,r.x,ry)<r.radius+28&&vx>.8f){hp-=18;vx*=.60f;vy=-4.2f;worldX-=10;}}
+        }
+
+        void endWin(){
+            if(!playing)return;playing=false;resultWin=true;coins+=100+runCoins;wins++;
+            if(wins>=2){wins=0;if(level<LEVELS)unlockedLevel=Math.max(unlockedLevel,level+1);}save();
+        }
+        void endLose(){playing=false;resultLose=true;save();}
+
+        void drawGame(Canvas c,int w,int h){drawWorld(c,w,h);drawHUD(c,w,h);drawControls(c,w,h);}
+
+        void drawWorld(Canvas c,int w,int h){
+            c.drawColor(Color.rgb(86,171,226));
+            p.setColor(Color.rgb(122,195,239));c.drawCircle(w*.18f,h*.20f,82,p);c.drawCircle(w*.77f,h*.15f,118,p);
+            p.setColor(Color.rgb(126,151,84));drawHills(c,cameraX*.28f,h*.61f,h*.18f);
+            p.setColor(Color.rgb(98,135,72));drawHills(c,cameraX*.52f,h*.70f,h*.13f);
+
+            path.reset();path.moveTo(0,h);for(int sx=-20;sx<=w+20;sx+=8)path.lineTo(sx,terrainY(cameraX+sx,h));path.lineTo(w,h);path.close();
+            p.setColor(Color.rgb(100,66,39));c.drawPath(path,p);
+            p.setColor(Color.rgb(129,85,46));for(int i=0;i<9;i++){float sx=(i*170-cameraX*.75f)%(w+170);c.drawCircle(sx,h*.83f+(i%2)*18,9,p);}
+            p.setColor(Color.rgb(112,183,55));path.reset();path.moveTo(0,terrainY(cameraX,h));
+            for(int sx=0;sx<=w;sx+=8)path.lineTo(sx,terrainY(cameraX+sx,h)-3);path.lineTo(w,terrainY(cameraX+w,h));path.lineTo(0,terrainY(cameraX,h)-3);path.close();c.drawPath(path,p);
+            for(Pickup q:pickups)if(!q.taken)drawPickup(c,q,h);for(Rock r:rocks)drawRock(c,r,h);
+            tank(c,worldX-cameraX,y-bounce*7,selectedTank,1.18f,angle);
+        }
+
+        void drawHills(Canvas c,float shift,float base,float amp){
+            path.reset();path.moveTo(0,getHeight());for(int x=0;x<=getWidth();x+=10){float yy=base+(float)Math.sin((x+shift)*.008)*amp+(float)Math.sin((x+shift)*.017)*amp*.35f;path.lineTo(x,yy);}path.lineTo(getWidth(),getHeight());path.close();c.drawPath(path,p);
+        }
+
+        float terrainY(float wx,int h){float base=h*.70f;return base+(float)Math.sin(wx*.0046)*70+(float)Math.sin(wx*.0108+level)*30+(float)Math.sin(wx*.022+level*.7)*13;}
+
+        void drawPickup(Canvas c,Pickup q,int h){float x=q.x-cameraX,y0=terrainY(q.x,h)+q.yOffset;if(x<-50||x>getWidth()+50)return;
+            if(q.type==0){p.setColor(Color.rgb(255,205,40));c.drawCircle(x,y0,13,p);p.setColor(Color.rgb(255,244,155));c.drawCircle(x-3,y0-3,4,p);txt(c,"$",x,y0+7,17,Color.rgb(120,80,10),true);}
+            else{p.setColor(Color.rgb(85,216,105));c.drawCircle(x,y0,17,p);txt(c,"+",x,y0+8,21,Color.WHITE,true);}}
+
+        void drawRock(Canvas c,Rock r,int h){float x=r.x-cameraX;if(x<-60||x>getWidth()+60)return;float y0=terrainY(r.x,h)-r.radius+4;p.setColor(Color.rgb(78,73,63));c.drawCircle(x,y0,r.radius,p);p.setColor(Color.rgb(110,104,92));c.drawCircle(x-5,y0-5,r.radius*.45f,p);}
+
+        void drawHUD(Canvas c,int w,int h){
+            p.setColor(Color.argb(190,20,27,32));c.drawRoundRect(new RectF(10,10,w-10,60),14,14,p);
+            txtL(c,"MÀN "+level+"/15",24,39,17,Color.WHITE);txtL(c,"HP "+hp+"/"+HP[selectedTank],115,39,16,Color.WHITE);txtL(c,"XU "+coins,255,39,16,Color.WHITE);
+            long left=Math.max(0,(LEVEL_TIME-(System.currentTimeMillis()-startTime)+999)/1000);txtR(c,left+"s",w-24,39,17,Color.WHITE);
+            p.setColor(Color.DKGRAY);c.drawRoundRect(new RectF(115,46,230,53),4,4,p);p.setColor(Color.GREEN);c.drawRoundRect(new RectF(115,46,115+115*Math.max(0,Math.min(1,hp/(float)HP[selectedTank])),53),4,4,p);
+        }
+
+        void drawControls(Canvas c,int w,int h){float by=h-94;p.setColor(Color.argb(105,0,0,0));c.drawCircle(105,by,68,p);c.drawCircle(w-95,by,58,p);p.setColor(Color.argb(185,220,220,220));c.drawCircle(joyKnobX,joyKnobY,26,p);txt(c,"GA",w-95,by+7,18,Color.WHITE,true);}
+
+        void drawResult(Canvas c,int w,int h){
+            p.setColor(Color.argb(210,0,0,0));c.drawRect(0,0,w,h,p);
+            if(resultWin){txt(c,level==LEVELS?"HOÀN THÀNH 15 MÀN":"VƯỢT MÀN!",w/2f,h/2f-55,38,Color.GREEN,true);txt(c,"+"+(100+runCoins)+" xu • thắng "+wins+"/2",w/2f,h/2f-17,20,Color.WHITE,true);txt(c,level==LEVELS?"Bạn đã hoàn tất chiến dịch":"Màn kế tiếp: "+Math.min(LEVELS,level+1),w/2f,h/2f+18,17,Color.WHITE,true);btn(c,w/2f-135,h/2f+55,w/2f+135,h/2f+108,level==LEVELS?"VỀ MENU":"CHƠI LẠI");}
+            else{txt(c,"XE BỊ HƯ!",w/2f,h/2f-25,40,Color.rgb(255,90,70),true);btn(c,w/2f-135,h/2f+45,w/2f+135,h/2f+100,"CHƠI LẠI");}
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent e){
+            float x=e.getX(),yy=e.getY();int act=e.getActionMasked(),w=getWidth(),h=getHeight();
+            if(act==MotionEvent.ACTION_DOWN){touchDownX=x;touchDownY=yy;
+                if(playing){if(yy>h-190&&x<w*.58f){joyBaseX=105;joyBaseY=h-94;joyKnobX=x;joyKnobY=yy;leftPressed=x<joyBaseX-8;rightPressed=x>joyBaseX+8;}else if(yy>h-175&&x>=w*.58f)boostPressed=true;}
+                else if(resultWin||resultLose){if(inside(x,yy,w/2f-150,h/2f+35,w/2f+150,h/2f+125)){if(resultWin&&level==LEVELS){startMenu();}else{startLevel(level);}}}
+                else if(shop)shopTap(x,yy);else if(levels)levelTap(x,yy);else menuTap(x,yy);return true;}
+            if(playing&&(act==MotionEvent.ACTION_MOVE||act==MotionEvent.ACTION_UP)){if(touchDownY>h-190&&touchDownX<w*.58f){float dx=clamp(x-joyBaseX,-58,58),dy=clamp(yy-joyBaseY,-58,58);joyKnobX=joyBaseX+dx;joyKnobY=joyBaseY+dy;leftPressed=dx<-8;rightPressed=dx>8;}if(act==MotionEvent.ACTION_UP){leftPressed=false;rightPressed=false;boostPressed=false;joyKnobX=joyBaseX;joyKnobY=joyBaseY;}return true;}return true;
+        }
+
+        void menuTap(float x,float y0){int w=getWidth();if(inside(x,y0,w/2f-170,160,w/2f+170,215))startLevel(level);else if(inside(x,y0,w/2f-170,227,w/2f+170,282))levels=true;else if(inside(x,y0,w/2f-170,294,w/2f+170,349))shop=true;}
+        void levelTap(float x,float y0){int h=getHeight();if(inside(x,y0,20,h-50,145,h-12)){levels=false;return;}for(int i=1;i<=LEVELS;i++){int q=i-1,col=q%5,row=q/5;float bx=95+col*158,by=78+row*72;if(i<=unlockedLevel&&inside(x,y0,bx-48,by,bx+48,by+48)){level=i;levels=false;startLevel(level);return;}}}
+        void shopTap(float x,float y0){int h=getHeight();if(inside(x,y0,20,h-52,145,h-12)){shop=false;return;}for(int i=0;i<4;i++){float bx=100+i*180;if(inside(x,y0,bx-70,262,bx+70,312)){if(ownedTank>=i)selectedTank=i;else if(i==ownedTank+1&&coins>=COST[i]){coins-=COST[i];ownedTank=i;selectedTank=i;save();}}}}
+        void startMenu(){playing=false;resultWin=false;resultLose=false;shop=false;levels=false;save();}
+
+        void btn(Canvas c,float l,float t,float r,float b,String s){p.setColor(Color.argb(220,25,34,39));c.drawRoundRect(new RectF(l,t,r,b),14,14,p);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(2);p.setColor(Color.argb(170,255,255,255));c.drawRoundRect(new RectF(l,t,r,b),14,14,p);p.setStyle(Paint.Style.FILL);txt(c,s,(l+r)/2,(t+b)/2+7,17,Color.WHITE,true);}
+        void txt(Canvas c,String s,float x,float y,float size,int color,boolean center){p.setTextSize(size);p.setColor(color);p.setStyle(Paint.Style.FILL);p.setTextAlign(center?Paint.Align.CENTER:Paint.Align.LEFT);c.drawText(s,x,y,p);}
+        void txtL(Canvas c,String s,float x,float y,float size,int color){txt(c,s,x,y,size,color,false);}
+        void txtR(Canvas c,String s,float x,float y,float size,int color){p.setTextAlign(Paint.Align.RIGHT);p.setTextSize(size);p.setColor(color);c.drawText(s,x,y,p);}
+        boolean inside(float x,float y,float l,float t,float r,float b){return x>=l&&x<=r&&y>=t&&y<=b;}
+        float clamp(float v,float a,float b){return Math.max(a,Math.min(b,v));}
+        int clampI(int v,int a,int b){return Math.max(a,Math.min(b,v));}
+        float dist(float ax,float ay,float bx,float by){return (float)Math.hypot(ax-bx,ay-by);}
+
+        void tank(Canvas c,float x,float y,int type,float s,float rot){
+            c.save();c.rotate((float)Math.toDegrees(rot),x,y);int[] body={Color.rgb(45,150,67),Color.rgb(38,125,60),Color.rgb(30,104,53),Color.rgb(25,83,45)};
+            float bw=78*s,bh=38*s;p.setColor(Color.argb(90,0,0,0));c.drawOval(new RectF(x-bw*.58f,y+bh*.34f,x+bw*.58f,y+bh*.56f),p);
+            p.setColor(Color.rgb(35,38,38));c.drawRoundRect(new RectF(x-bw*.60f,y-bh*.15f,x+bw*.60f,y+bh*.55f),13*s,13*s,p);
+            for(int i=0;i<5;i++){p.setColor(Color.rgb(85,86,83));c.drawCircle(x-bw*.43f+i*bw*.21f,y+bh*.25f,8*s,p);}
+            p.setColor(body[type]);c.drawRoundRect(new RectF(x-bw*.50f,y-bh*.50f,x+bw*.50f,y+bh*.22f),10*s,10*s,p);
+            p.setColor(Color.rgb(60,88,68));c.drawRoundRect(new RectF(x-bw*.15f,y-bh*.75f,x+bw*.32f,y-bh*.10f),10*s,10*s,p);
+            p.setColor(Color.rgb(176,216,218));c.drawCircle(x+bw*.08f,y-bh*.47f,8*s,p);
+            p.setColor(Color.rgb(72,72,72));c.drawRect(x-bw*.43f,y-bh*.67f,x-bw*.10f,y-bh*.51f,p);
+            p.setColor(Color.rgb(215,200,104));c.drawRect(x-bw*.48f,y-bh*.88f,x-bw*.25f,y-bh*.77f,p);
+            p.setStrokeWidth(4*s);p.setColor(Color.rgb(48,50,46));c.drawLine(x+bw*.22f,y-bh*.55f,x+bw*.47f,y-bh*.93f,p);p.setStrokeWidth(2*s);p.setColor(Color.rgb(110,215,120));c.drawLine(x+bw*.47f,y-bh*.93f,x+bw*.47f,y-bh*1.12f,p);c.restore();
+        }
+
+        static final class Pickup{float x,yOffset;int type;boolean taken;}
+        static final class Rock{float x,radius;}
     }
 }
