@@ -22,6 +22,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10'
+      - name: Fix source compile error
+        run: sed -i 's/count(Part.MOTOR)/countMotor()/g' app/src/main/java/com/tankadventures/TankGameView.java && sed -i '/void updateBattle(float dt,long now){/i\    int countMotor(){ int n=0; for(Part a:parts) if(a.type==Part.MOTOR) n++; return n; }\n' app/src/main/java/com/tankadventures/TankGameView.java
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
       - name: Upload APK
