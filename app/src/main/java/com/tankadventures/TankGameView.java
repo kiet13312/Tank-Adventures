@@ -9,14 +9,16 @@ import java.util.*;
 
 public class TankGameView extends View {
     static final int VW=1280,VH=720,FIRE_COOLDOWN=2000;
+    static final int BUILD_VERSION=2, KV2_COST=500;
     final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
     final ArrayList<Part> parts=new ArrayList<>();
     final ArrayList<Shot> shots=new ArrayList<>();
     final SharedPreferences prefs;
+    final Bitmap ms1Body,ms1Head,kv2Body,kv2Head;
     Enemy enemy;
     float scale,ox,oy,gunAngle=18,bodyTilt=0,worldX=420,cameraX;
     boolean buildMode=true,left,right,up,down,levelWon,levelLost;
-    int drag=-1,level=1,coins=0,playerHP=430,playerArmor=170;
+    int drag=-1,level=1,coins=0,playerHP=430,playerArmor=170,tankId=0;
     float[] relX,relY;
     long last,enemyNext,enemyThink,lastPlayerShot=0;
     String msg="Kéo bộ phận vào mấu nối để HÀN";
@@ -24,32 +26,43 @@ public class TankGameView extends View {
     public TankGameView(Context c){
         super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);
         prefs=c.getSharedPreferences("tank_adventures",Context.MODE_PRIVATE);
-        coins=prefs.getInt("coins",0);level=Math.max(1,Math.min(15,prefs.getInt("level",1)));
+        coins=prefs.getInt("coins",0);
+        level=Math.max(1,Math.min(15,prefs.getInt("level",1)));
+        tankId=prefs.getInt("tank_id",0);
+        ms1Body=loadBitmap(c,"ms1body");ms1Head=loadBitmap(c,"ms1head");
+        kv2Body=loadBitmap(c,"kv2body");kv2Head=loadBitmap(c,"kv2head");
         reset();last=System.currentTimeMillis();
+    }
+
+    Bitmap loadBitmap(Context c,String name){
+        int id=getResources().getIdentifier(name,"drawable",c.getPackageName());
+        return id==0?null:BitmapFactory.decodeResource(getResources(),id);
     }
 
     void reset(){
         shots.clear();playerHP=430;playerArmor=170;levelWon=false;levelLost=false;worldX=420;
         bodyTilt=0;loadBuild();
         enemy=makeEnemy(level);long now=System.currentTimeMillis();enemyNext=now+1200;enemyThink=now+250;
-        lastPlayerShot=0;msg="Nút ▲▼ nghiêng đầu xe • tháp xoay ở cổ";
+        lastPlayerShot=0;msg="MS-1 miễn phí • KV-2 mua bằng xu";
     }
 
     void defaultBuild(){
         parts.clear();
-        add(Part.FRAME,260,455,-1);add(Part.MOTOR,260,390,0);add(Part.ARMOR,260,425,0);
-        add(Part.BIG,170,515,0);add(Part.BIG,275,515,0);add(Part.SMALL,225,530,0);
-        add(Part.HINGE,325,370,0);add(Part.GUN,380,370,6);
+        add(Part.BODY,260,455,-1);add(Part.HEAD,315,390,0);
+        add(Part.ARMOR,260,420,0);add(Part.BIG,170,515,0);add(Part.BIG,275,515,0);
+        add(Part.SMALL,225,530,0);add(Part.HINGE,325,370,1);add(Part.GUN,380,370,6);
         parts.get(parts.size()-1).angle=18;makeRelative();
     }
 
     void loadBuild(){
+        int version=prefs.getInt("build_version",0);
+        if(version!=BUILD_VERSION){defaultBuild();saveBuild();return;}
         String data=prefs.getString("saved_build","");
         if(data.length()==0){defaultBuild();saveBuild();return;}
         try{
             parts.clear();String[] rows=data.split(";");
             for(String row:rows){if(row.trim().length()==0)continue;String[] v=row.split(",");if(v.length<5)throw new Exception();Part a=new Part(Integer.parseInt(v[0]),Float.parseFloat(v[1]),Float.parseFloat(v[2]));a.weld=Integer.parseInt(v[3]);a.angle=Float.parseFloat(v[4]);parts.add(a);}
-            if(parts.size()==0||parts.get(0).type!=Part.FRAME)throw new Exception();
+            if(parts.size()==0||parts.get(0).type!=Part.BODY)throw new Exception();
             makeRelative();Part g=first(Part.GUN);if(g!=null)gunAngle=g.angle;
         }catch(Exception ex){defaultBuild();saveBuild();}
     }
@@ -57,7 +70,7 @@ public class TankGameView extends View {
     void saveBuild(){
         StringBuilder s=new StringBuilder();
         for(Part a:parts)s.append(a.type).append(',').append(a.x).append(',').append(a.y).append(',').append(a.weld).append(',').append(a.angle).append(';');
-        prefs.edit().putString("saved_build",s.toString()).apply();
+        prefs.edit().putString("saved_build",s.toString()).putInt("build_version",BUILD_VERSION).apply();
     }
 
     void add(int type,float x,float y,int parent){Part a=new Part(type,x,y);a.weld=parent;parts.add(a);}
@@ -69,6 +82,21 @@ public class TankGameView extends View {
     Part first(int type){for(Part a:parts)if(a.type==type&&a.weld>=0)return a;return null;}
     ArrayList<Integer> guns(){ArrayList<Integer> r=new ArrayList<>();for(int i=0;i<parts.size();i++)if(parts.get(i).type==Part.GUN&&parts.get(i).weld>=0)r.add(i);return r;}
     int hingeIndex(){for(int i=0;i<parts.size();i++)if(parts.get(i).type==Part.HINGE&&parts.get(i).weld>=0)return i;return -1;}
+
+    boolean isKV2(){return tankId==1;}
+    String tankName(){return isKV2()?"KV-2":"MS-1";}
+    Bitmap tankBody(){return isKV2()?kv2Body:ms1Body;}
+    Bitmap tankHead(){return isKV2()?kv2Head:ms1Head;}
+
+    void switchTank(){
+        if(tankId==0){
+            if(coins<KV2_COST){msg="Cần "+KV2_COST+" xu để mở KV-2";return;}
+            coins-=KV2_COST;tankId=1;prefs.edit().putInt("coins",coins).putInt("tank_id",tankId).apply();
+            defaultBuild();saveBuild();msg="Đã mua KV-2 • -"+KV2_COST+" xu";
+        }else{
+            tankId=0;prefs.edit().putInt("tank_id",tankId).apply();defaultBuild();saveBuild();msg="Đã đổi sang MS-1 miễn phí";
+        }
+    }
 
     Enemy makeEnemy(int lv){
         Enemy e=new Enemy();e.x=2250+lv*180;e.hp=250+lv*48;e.maxHp=e.hp;e.armor=100+lv*20;e.damage=22+lv*2;e.fireMs=Math.max(850,1900-lv*55);e.speed=15+lv*1.6f;e.boss=lv%5==0;
@@ -90,17 +118,22 @@ public class TankGameView extends View {
         bg(c);txt(c,"TANK ADVENTURES — LẮP RÁP",30,42,34,true);txt(c,"MÀN "+level+" / 15     XU: "+coins,30,75,21,false);
         p.setColor(Color.argb(95,20,30,35));c.drawRoundRect(35,105,850,575,24,24,p);txt(c,"KHU VỰC LẮP RÁP",70,145,22,true);
         for(int i=0;i<parts.size();i++)drawPart(c,parts.get(i),i);
-        p.setColor(Color.argb(220,27,32,38));c.drawRoundRect(880,95,1250,575,24,24,p);txt(c,"BỘ PHẬN",915,135,25,true);
-        palette(c,"KHUNG",0,165);palette(c,"MOTOR",1,225);palette(c,"GIÁP",2,285);palette(c,"BÁNH TO",3,345);palette(c,"BÁNH NHỎ",4,405);palette(c,"BẢN LỀ",5,465);palette(c,"SÚNG",6,525);
-        p.setColor(Color.argb(210,25,25,25));c.drawRoundRect(35,600,850,695,18,18,p);txt(c,msg,60,632,21,false);txt(c,"Mấu xanh = điểm nối • Hàn xong sẽ được LƯU lại.",60,665,18,false);
+        p.setColor(Color.argb(220,27,32,38));c.drawRoundRect(880,95,1250,575,24,24,p);txt(c,"CHỌN XE",915,130,25,true);
+        button(c,900,145,1060,200,"MS-1 FREE",Color.rgb(55,125,90));
+        button(c,1070,145,1230,200,isKV2()?"KV-2 ĐÃ MỞ":"KV-2 500 XU",Color.rgb(135,85,45));
+        txt(c,"ĐANG DÙNG: "+tankName(),915,225,18,true);
+        palette(c,"GIÁP",2,265);palette(c,"BÁNH TO",3,315);palette(c,"BÁNH NHỎ",4,365);palette(c,"BẢN LỀ",5,415);palette(c,"SÚNG",6,465);
+        p.setColor(Color.argb(210,25,25,25));c.drawRoundRect(35,600,850,695,18,18,p);txt(c,msg,60,632,21,false);txt(c,"Thân + đầu xe dùng ảnh riêng • kéo bộ phận vào mấu nối để HÀN.",60,665,18,false);
         button(c,900,605,1075,685,"CHIẾN ĐẤU",Color.rgb(55,145,70));button(c,1095,605,1245,685,"RESET",Color.rgb(175,75,55));
     }
-    void palette(Canvas c,String s,int type,float y){p.setColor(Color.rgb(58,68,76));c.drawRoundRect(905,y-25,1225,y+28,14,14,p);txt(c,s,930,y+7,20,true);p.setColor(Color.rgb(90,235,215));c.drawCircle(1190,y,13,p);}
-    int partColor(int t){switch(t){case Part.FRAME:return Color.rgb(48,60,68);case Part.MOTOR:return Color.rgb(160,105,52);case Part.ARMOR:return Color.rgb(125,136,140);case Part.BIG:return Color.rgb(45,47,50);case Part.SMALL:return Color.rgb(63,65,69);case Part.HINGE:return Color.rgb(185,145,52);default:return Color.rgb(65,87,105);}}
-    ArrayList<PointF> connectors(Part a){ArrayList<PointF> r=new ArrayList<>();if(a.type==Part.FRAME){r.add(new PointF(a.x-90,a.y));r.add(new PointF(a.x,a.y-35));r.add(new PointF(a.x+90,a.y));r.add(new PointF(a.x,a.y+35));}else if(a.type==Part.HINGE){r.add(new PointF(a.x,a.y));r.add(new PointF(a.x+28,a.y));}else r.add(new PointF(a.x,a.y));return r;}
+    void palette(Canvas c,String s,int type,float y){p.setColor(Color.rgb(58,68,76));c.drawRoundRect(905,y-20,1225,y+22,12,12,p);txt(c,s,930,y+7,18,true);p.setColor(Color.rgb(90,235,215));c.drawCircle(1190,y,11,p);}
+    int partColor(int t){switch(t){case Part.BODY:return Color.rgb(48,60,68);case Part.HEAD:return Color.rgb(95,105,112);case Part.ARMOR:return Color.rgb(125,136,140);case Part.BIG:return Color.rgb(45,47,50);case Part.SMALL:return Color.rgb(63,65,69);case Part.HINGE:return Color.rgb(185,145,52);default:return Color.rgb(65,87,105);}}
+    ArrayList<PointF> connectors(Part a){ArrayList<PointF> r=new ArrayList<>();if(a.type==Part.BODY){r.add(new PointF(a.x-90,a.y));r.add(new PointF(a.x,a.y-35));r.add(new PointF(a.x+90,a.y));r.add(new PointF(a.x,a.y+35));}else if(a.type==Part.HINGE){r.add(new PointF(a.x,a.y));r.add(new PointF(a.x+28,a.y));}else r.add(new PointF(a.x,a.y));return r;}
+
     void drawPart(Canvas c,Part a,int i){
         p.setStyle(Paint.Style.FILL);p.setColor(partColor(a.type));
-        if(a.type==Part.FRAME)c.drawRoundRect(a.x-130,a.y-35,a.x+130,a.y+35,18,18,p);else if(a.type==Part.MOTOR)c.drawRoundRect(a.x-55,a.y-30,a.x+55,a.y+30,14,14,p);
+        if(a.type==Part.BODY){drawBitmapFit(c,tankBody(),a.x-130,a.y-55,a.x+130,a.y+55);if(tankBody()==null)c.drawRoundRect(a.x-130,a.y-35,a.x+130,a.y+35,18,18,p);}
+        else if(a.type==Part.HEAD){drawBitmapFit(c,tankHead(),a.x-95,a.y-62,a.x+95,a.y+5);if(tankHead()==null)c.drawRoundRect(a.x-90,a.y-35,a.x+90,a.y+15,18,18,p);}
         else if(a.type==Part.ARMOR){Path q=new Path();q.moveTo(a.x-90,a.y+28);q.lineTo(a.x-60,a.y-30);q.lineTo(a.x+75,a.y-30);q.lineTo(a.x+95,a.y+28);q.close();c.drawPath(q,p);}
         else if(a.type==Part.BIG||a.type==Part.SMALL){float r=a.type==Part.BIG?38:25;c.drawCircle(a.x,a.y,r,p);p.setColor(Color.rgb(155,155,155));c.drawCircle(a.x,a.y,r*.48f,p);}
         else if(a.type==Part.HINGE){c.drawCircle(a.x,a.y,23,p);p.setColor(Color.rgb(40,40,40));c.drawCircle(a.x,a.y,8,p);}
@@ -108,9 +141,11 @@ public class TankGameView extends View {
         p.setColor(Color.rgb(90,235,215));for(PointF q:connectors(a))c.drawCircle(q.x,q.y,7,p);if(i==drag){p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(3);p.setColor(Color.YELLOW);c.drawCircle(a.x,a.y,48,p);p.setStyle(Paint.Style.FILL);}if(a.weld>=0)txt(c,"HÀN",a.x-17,a.y+55,14,false);
     }
 
+    void drawBitmapFit(Canvas c,Bitmap b,float l,float t,float r,float bot){if(b==null)return;Rect src=new Rect(0,0,b.getWidth(),b.getHeight());RectF dst=new RectF(l,t,r,bot);p.setFilterBitmap(true);c.drawBitmap(b,src,dst,p);}
+
     void drawBattle(Canvas c){
-        drawWorld(c);txt(c,"MÀN "+level+"/15",25,34,24,true);txt(c,"HP "+playerHP+"   GIÁP "+playerArmor,25,64,22,true);txt(c,"XU "+coins,25,92,20,false);txt(c,"ENEMY "+Math.max(0,enemy.hp),1020,34,24,true);txt(c,enemy.name,1020,62,18,false);txt(c,"AI: "+enemy.aiLabel(),1020,88,16,false);txt(c,"NÒNG "+(int)gunAngle+"°  THÂN "+(int)bodyTilt+"°",25,120,18,false);
-        long remain=Math.max(0,FIRE_COOLDOWN-(System.currentTimeMillis()-lastPlayerShot));txt(c,remain==0?"BẮN SẴN":"HỒI "+(remain/1000f<1?"<1":(remain/1000)+"s"),25,145,18,true);
+        drawWorld(c);txt(c,"MÀN "+level+"/15",25,34,24,true);txt(c,tankName()+"   HP "+playerHP+"   GIÁP "+playerArmor,25,64,22,true);txt(c,"XU "+coins,25,92,20,false);txt(c,"ENEMY "+Math.max(0,enemy.hp),1020,34,24,true);txt(c,enemy.name,1020,62,18,false);txt(c,"AI: "+enemy.aiLabel(),1020,88,16,false);txt(c,"NÒNG "+(int)gunAngle+"°  THÂN "+(int)bodyTilt+"°",25,120,18,false);
+        long remain=Math.max(0,FIRE_COOLDOWN-(System.currentTimeMillis()-lastPlayerShot));txt(c,remain==0?"SẴN":"HỒI "+(remain/1000f<1?"<1":(remain/1000)+"s"),25,145,18,true);
         button(c,20,585,115,685,"◀",Color.rgb(55,80,100));button(c,125,585,220,685,"▶",Color.rgb(55,80,100));button(c,230,585,325,685,"▲",Color.rgb(125,95,55));button(c,330,585,425,685,"▼",Color.rgb(125,95,55));button(c,875,585,1060,685,"LẮP RÁP",Color.rgb(60,130,75));button(c,1080,585,1250,685,"BẮN",Color.rgb(185,55,45));
         if(levelWon){p.setColor(Color.argb(225,20,80,30));c.drawRoundRect(330,220,950,500,28,28,p);txt(c,"VICTORY!",500,300,58,true);txt(c,"+100 XU",545,350,30,true);if(level<15)button(c,490,390,790,465,"MÀN TIẾP",Color.rgb(55,145,70));else txt(c,"HOÀN THÀNH 15 MÀN!",440,410,27,true);}
         if(levelLost){p.setColor(Color.argb(225,90,25,25));c.drawRoundRect(330,220,950,500,28,28,p);txt(c,"DEFEAT",530,300,58,true);button(c,490,390,790,465,"CHƠI LẠI",Color.rgb(175,75,55));}
@@ -119,38 +154,29 @@ public class TankGameView extends View {
     void drawTerrain(Canvas c){float l=cameraX-100,r=cameraX+1380;p.setStyle(Paint.Style.FILL);p.setColor(Color.rgb(103,179,83));Path q=new Path();q.moveTo(l,terrainY(l));for(float x=l;x<=r;x+=20)q.lineTo(x,terrainY(x));q.lineTo(r,VH);q.lineTo(l,VH);q.close();c.drawPath(q,p);p.setColor(Color.rgb(174,220,111));Path t=new Path();t.moveTo(l,terrainY(l)-20);for(float x=l;x<=r;x+=20)t.lineTo(x,terrainY(x)-20);t.lineTo(r,terrainY(r)-20);t.lineTo(l,terrainY(l)-20);t.close();c.drawPath(t,p);}
     void drawFinish(Canvas c){float x=levelLength()-180,y=terrainY(x);p.setColor(Color.DKGRAY);c.drawRect(x,y-170,x+10,y,p);p.setColor(Color.RED);Path f=new Path();f.moveTo(x+10,y-170);f.lineTo(x+120,y-145);f.lineTo(x+10,y-120);f.close();c.drawPath(f,p);txt(c,"FINISH",x-20,y-190,20,true);}
 
-    float battleBaseY(){
-        float maxBottom=35;
-        for(int i=0;i<parts.size();i++)if(parts.get(i).weld>=0||i==0){Part a=parts.get(i);float h=a.type==Part.BIG?40:a.type==Part.SMALL?27:a.type==Part.FRAME?35:a.type==Part.ARMOR?30:a.type==Part.MOTOR?30:a.type==Part.GUN?8:20;maxBottom=Math.max(maxBottom,relY[i]+h);}
-        return terrainY(worldX)-maxBottom-2;
-    }
-
-    float[] localToWorld(float lx,float ly,float baseY,float bodyRad){
-        return new float[]{worldX+lx*(float)Math.cos(bodyRad)-ly*(float)Math.sin(bodyRad),baseY+lx*(float)Math.sin(bodyRad)+ly*(float)Math.cos(bodyRad)};
-    }
+    float battleBaseY(){float maxBottom=35;for(int i=0;i<parts.size();i++)if(parts.get(i).weld>=0||i==0){Part a=parts.get(i);float h=a.type==Part.BIG?40:a.type==Part.SMALL?27:a.type==Part.BODY?35:a.type==Part.HEAD?30:a.type==Part.ARMOR?30:a.type==Part.GUN?8:20;maxBottom=Math.max(maxBottom,relY[i]+h);}return terrainY(worldX)-maxBottom-2;}
+    float[] localToWorld(float lx,float ly,float baseY,float bodyRad){return new float[]{worldX+lx*(float)Math.cos(bodyRad)-ly*(float)Math.sin(bodyRad),baseY+lx*(float)Math.sin(bodyRad)+ly*(float)Math.cos(bodyRad)};}
 
     void drawPlayer(Canvas c){
-        if(parts.isEmpty())return;float baseY=battleBaseY();float bodyRad=(float)Math.toRadians((float)Math.toDegrees(Math.atan(terrainSlope(worldX)))+bodyTilt);c.save();c.translate(worldX,baseY);c.rotate((float)Math.toDegrees(bodyRad));
-        int hi=hingeIndex();
-        for(int i=0;i<parts.size();i++){Part a=parts.get(i);if((i==0||a.weld>=0)&&a.type!=Part.GUN)drawLocal(c,a,relX[i],relY[i]);}
-        if(hi>=0){float hx=relX[hi],hy=relY[hi];for(int i:guns())drawGunAtPivot(c,hx,hy);p.setColor(Color.rgb(185,145,52));c.drawCircle(hx,hy,10,p);}else for(int i:guns())drawLocal(c,parts.get(i),relX[i],relY[i]);
-        c.restore();
+        if(parts.isEmpty())return;float baseY=battleBaseY();float bodyRad=(float)Math.toRadians((float)Math.toDegrees(Math.atan(terrainSlope(worldX)))+bodyTilt);c.save();c.translate(worldX,baseY);c.rotate((float)Math.toDegrees(bodyRad));int hi=hingeIndex();for(int i=0;i<parts.size();i++){Part a=parts.get(i);if((i==0||a.weld>=0)&&a.type!=Part.GUN)drawLocal(c,a,relX[i],relY[i]);}if(hi>=0){float hx=relX[hi],hy=relY[hi];for(int i:guns())drawGunAtPivot(c,hx,hy);p.setColor(Color.rgb(185,145,52));c.drawCircle(hx,hy,10,p);}else for(int i:guns())drawLocal(c,parts.get(i),relX[i],relY[i]);c.restore();
     }
 
     void drawLocal(Canvas c,Part a,float x,float y){
-        p.setStyle(Paint.Style.FILL);p.setColor(partColor(a.type));if(a.type==Part.FRAME)c.drawRoundRect(x-130,y-35,x+130,y+35,18,18,p);else if(a.type==Part.MOTOR)c.drawRoundRect(x-55,y-30,x+55,y+30,14,14,p);else if(a.type==Part.ARMOR){Path q=new Path();q.moveTo(x-90,y+28);q.lineTo(x-60,y-30);q.lineTo(x+75,y-30);q.lineTo(x+95,y+28);q.close();c.drawPath(q,p);}else if(a.type==Part.BIG||a.type==Part.SMALL){float r=a.type==Part.BIG?40:27;c.drawCircle(x,y,r,p);p.setColor(Color.rgb(145,145,145));c.drawCircle(x,y,r*.48f,p);}else if(a.type==Part.HINGE){c.drawCircle(x,y,20,p);p.setColor(Color.rgb(40,40,40));c.drawCircle(x,y,8,p);}else{drawGunAtPivot(c,x,y);}
+        p.setStyle(Paint.Style.FILL);p.setColor(partColor(a.type));
+        if(a.type==Part.BODY){drawBitmapFit(c,tankBody(),x-130,y-55,x+130,y+55);if(tankBody()==null)c.drawRoundRect(x-130,y-35,x+130,y+35,18,18,p);}
+        else if(a.type==Part.HEAD){drawBitmapFit(c,tankHead(),x-95,y-62,x+95,y+5);if(tankHead()==null)c.drawRoundRect(x-90,y-35,x+90,y+15,18,18,p);}
+        else if(a.type==Part.ARMOR){Path q=new Path();q.moveTo(x-90,y+28);q.lineTo(x-60,y-30);q.lineTo(x+75,y-30);q.lineTo(x+95,y+28);q.close();c.drawPath(q,p);}
+        else if(a.type==Part.BIG||a.type==Part.SMALL){float r=a.type==Part.BIG?40:27;c.drawCircle(x,y,r,p);p.setColor(Color.rgb(145,145,145));c.drawCircle(x,y,r*.48f,p);}
+        else if(a.type==Part.HINGE){c.drawCircle(x,y,20,p);p.setColor(Color.rgb(40,40,40));c.drawCircle(x,y,8,p);}
+        else{drawGunAtPivot(c,x,y);}
     }
 
-    void drawGunAtPivot(Canvas c,float x,float y){
-        p.setColor(Color.rgb(45,45,45));p.setStrokeWidth(17);p.setStrokeCap(Paint.Cap.ROUND);float r=(float)Math.toRadians(gunAngle);c.drawLine(x,y,x+155*(float)Math.cos(r),y-155*(float)Math.sin(r),p);p.setColor(Color.rgb(100,100,100));c.drawCircle(x,y,18,p);
-    }
+    void drawGunAtPivot(Canvas c,float x,float y){p.setColor(Color.rgb(45,45,45));p.setStrokeWidth(17);p.setStrokeCap(Paint.Cap.ROUND);float r=(float)Math.toRadians(gunAngle);c.drawLine(x,y,x+155*(float)Math.cos(r),y-155*(float)Math.sin(r),p);p.setColor(Color.rgb(100,100,100));c.drawCircle(x,y,18,p);}
 
-    void drawEnemy(Canvas c){
-        float x=enemy.x,y=terrainY(x)-35;p.setStyle(Paint.Style.FILL);p.setColor(Color.argb(60,0,0,0));c.drawOval(x-145,y+25,x+145,y+65,p);p.setColor(Color.rgb(55,55,58));c.drawRoundRect(x-145,y-20,x+145,y+55,28,28,p);p.setColor(Color.rgb(145,145,145));for(int i=0;i<7;i++)c.drawCircle(x-105+i*35,y+20,13,p);p.setColor(enemy.boss?Color.rgb(115,55,55):Color.rgb(125,75,60));Path h=new Path();h.moveTo(x-120,y-55);h.lineTo(x+100,y-55);h.lineTo(x+125,y+5);h.lineTo(x-105,y+5);h.close();c.drawPath(h,p);p.setColor(enemy.boss?Color.rgb(75,45,45):Color.rgb(95,60,55));c.drawRoundRect(x-50,y-108,x+60,y-50,22,22,p);p.setColor(Color.rgb(45,45,45));p.setStrokeWidth(17);p.setStrokeCap(Paint.Cap.ROUND);c.drawLine(x+12,y-78,x+145,y-78,p);p.setColor(Color.rgb(190,190,175));c.drawCircle(x+112,y-15,22,p);p.setColor(Color.argb(160,0,0,0));c.drawRect(x-120,y-150,x+120,y-136,p);p.setColor(Color.rgb(70,220,85));c.drawRect(x-120,y-150,x-120+240*Math.max(0,enemy.hp)/(float)enemy.maxHp,y-136,p);
-    }
+    void drawEnemy(Canvas c){float x=enemy.x,y=terrainY(x)-35;p.setStyle(Paint.Style.FILL);p.setColor(Color.argb(60,0,0,0));c.drawOval(x-145,y+25,x+145,y+65,p);p.setColor(Color.rgb(55,55,58));c.drawRoundRect(x-145,y-20,x+145,y+55,28,28,p);p.setColor(Color.rgb(145,145,145));for(int i=0;i<7;i++)c.drawCircle(x-105+i*35,y+20,13,p);p.setColor(enemy.boss?Color.rgb(115,55,55):Color.rgb(125,75,60));Path h=new Path();h.moveTo(x-120,y-55);h.lineTo(x+100,y-55);h.lineTo(x+125,y+5);h.lineTo(x-105,y+5);h.close();c.drawPath(h,p);p.setColor(enemy.boss?Color.rgb(75,45,45):Color.rgb(95,60,55));c.drawRoundRect(x-50,y-108,x+60,y-50,22,22,p);p.setColor(Color.rgb(45,45,45));p.setStrokeWidth(17);p.setStrokeCap(Paint.Cap.ROUND);c.drawLine(x+12,y-78,x+145,y-78,p);p.setColor(Color.rgb(190,190,175));c.drawCircle(x+112,y-15,22,p);p.setColor(Color.argb(160,0,0,0));c.drawRect(x-120,y-150,x+120,y-136,p);p.setColor(Color.rgb(70,220,85));c.drawRect(x-120,y-150,x-120+240*Math.max(0,enemy.hp)/(float)enemy.maxHp,y-136,p);}
 
     void updateBattle(float dt,long now){
-        float speed=135+count(Part.MOTOR)*55;if(right)worldX=Math.min(levelLength()-250,worldX+speed*dt);if(left)worldX=Math.max(120,worldX-speed*dt);
+        float speed=135+count(Part.BODY)*55;if(right)worldX=Math.min(levelLength()-250,worldX+speed*dt);if(left)worldX=Math.max(120,worldX-speed*dt);
         if(up)bodyTilt=Math.max(-18,bodyTilt-55*dt);if(down)bodyTilt=Math.min(18,bodyTilt+55*dt);
         for(Part a:parts)if(a.type==Part.GUN)a.angle=gunAngle;
         if(enemy.hp>0)updateEnemyAI(dt,now);
@@ -166,7 +192,7 @@ public class TankGameView extends View {
         float move;if(enemy.aiMode==0)move=-enemy.speed;else if(enemy.aiMode==2)move=enemy.speed;else move=enemy.speed*.35f*enemy.strafe;
         for(Shot s:shots)if(!s.enemy&&!s.dead&&Math.abs(s.x-enemy.x)<260){float futureY=s.y+s.vy*.18f;float ey=terrainY(enemy.x)-70;if(Math.abs(futureY-ey)<95){move+=(s.x<enemy.x?enemy.speed*.9f:-enemy.speed*.9f);break;}}
         enemy.x+=move*dt;enemy.x=Math.max(worldX+430,Math.min(levelLength()-260,enemy.x));
-        float ex=enemy.x-125,ey=terrainY(enemy.x)-110;float playerVelocity=(right?135+count(Part.MOTOR)*55:0)-(left?135+count(Part.MOTOR)*55:0);float dx=worldX-ex;float dy=(terrainY(worldX)-90)-ey;float flight=Math.max(.35f,Math.abs(dx)/590f);float predictedX=worldX+playerVelocity*flight;predictedX=Math.max(120,Math.min(levelLength()-250,predictedX));dx=predictedX-ex;dy=(terrainY(predictedX)-90)-ey;float vx=590*Math.signum(dx);if(Math.abs(dx)<1)vx=590;float vy=(dy-.5f*760*flight*flight)/flight;enemy.aiAim=(float)Math.atan2(vy,vx);
+        float ex=enemy.x-125,ey=terrainY(enemy.x)-110;float playerVelocity=(right?135+count(Part.BODY)*55:0)-(left?135+count(Part.BODY)*55:0);float dx=worldX-ex;float dy=(terrainY(worldX)-90)-ey;float flight=Math.max(.35f,Math.abs(dx)/590f);float predictedX=worldX+playerVelocity*flight;predictedX=Math.max(120,Math.min(levelLength()-250,predictedX));dx=predictedX-ex;dy=(terrainY(predictedX)-90)-ey;float vx=590*Math.signum(dx);if(Math.abs(dx)<1)vx=590;float vy=(dy-.5f*760*flight*flight)/flight;enemy.aiAim=(float)Math.atan2(vy,vx);
         if(now>=enemyNext&&playerHP>0&&enemy.hp>0){float range=Math.abs(worldX-enemy.x);if(range<1750){shots.add(new Shot(ex,ey,enemy.aiAim,590,enemy.damage,true));if(enemy.boss&&enemy.burst<2){enemy.burst++;enemyNext=now+260;}else{enemy.burst=0;enemyNext=now+enemy.fireMs;}}else enemyNext=now+250;}
     }
 
@@ -178,7 +204,7 @@ public class TankGameView extends View {
         long now=System.currentTimeMillis();if(now-lastPlayerShot<FIRE_COOLDOWN){msg="ĐANG HỒI NÒNG "+Math.max(1,(FIRE_COOLDOWN-(now-lastPlayerShot)+999)/1000)+"s";return;}
         if(playerHP<=0||enemy.hp<=0||levelWon||levelLost)return;ArrayList<Integer> gs=guns();if(gs.size()==0)return;
         float baseY=battleBaseY();float terrainRad=(float)Math.atan(terrainSlope(worldX));float bodyRad=terrainRad+(float)Math.toRadians(bodyTilt);int hi=hingeIndex();float hx=hi>=0?relX[hi]:0,hy=hi>=0?relY[hi]:0;
-        float[] pivot=localToWorld(hx,hy,baseY,bodyRad);float totalRad=bodyRad-(float)Math.toRadians(gunAngle);float speed=650+count(Part.MOTOR)*30;
+        float[] pivot=localToWorld(hx,hy,baseY,bodyRad);float totalRad=bodyRad-(float)Math.toRadians(gunAngle);float speed=650+count(Part.BODY)*30;
         for(int gi:gs){float muzzleX=pivot[0]+155*(float)Math.cos(totalRad);float muzzleY=pivot[1]+155*(float)Math.sin(totalRad);shots.add(new Shot(muzzleX,muzzleY,totalRad,speed,32,false));}
         lastPlayerShot=now;msg="ĐÃ BẮN "+gs.size()+" NÒNG TỪ ĐẦU NÒNG";
     }
@@ -187,13 +213,15 @@ public class TankGameView extends View {
         int a=e.getActionMasked();if(a==MotionEvent.ACTION_DOWN){
             if(x>895&&y>590&&x<1080){makeRelative();saveBuild();buildMode=false;return true;}
             if(x>1085&&y>590){defaultBuild();saveBuild();return true;}
-            if(x>895&&x<1240&&y>140&&y<575){int t=paletteType(y);if(t>=0){Part z=new Part(t,650,300);z.weld=-1;z.angle=gunAngle;parts.add(z);drag=parts.size()-1;msg="Đang kéo "+name(t);return true;}}
+            if(x>=900&&x<=1065&&y>=140&&y<=205){tankId=0;prefs.edit().putInt("tank_id",0).apply();defaultBuild();saveBuild();msg="Đã chọn MS-1 miễn phí";return true;}
+            if(x>=1065&&x<=1240&&y>=140&&y<=205){switchTank();return true;}
+            if(x>895&&x<1240&&y>235&&y<490){int t=paletteType(y);if(t>=0){Part z=new Part(t,650,300);z.weld=-1;z.angle=gunAngle;parts.add(z);drag=parts.size()-1;msg="Đang kéo "+name(t);return true;}}
             for(int i=parts.size()-1;i>=0;i--){Part z=parts.get(i);if(Math.hypot(x-z.x,y-z.y)<72){drag=i;return true;}}
         }
         if((a==MotionEvent.ACTION_MOVE||a==MotionEvent.ACTION_UP)&&drag>=0){Part z=parts.get(drag);z.x=x;z.y=y;if(a==MotionEvent.ACTION_UP){tryWeld(drag);drag=-1;saveBuild();}invalidate();return true;}return true;
     }
-    int paletteType(float y){if(y<195)return 0;if(y<255)return 1;if(y<315)return 2;if(y<375)return 3;if(y<435)return 4;if(y<495)return 5;if(y<575)return 6;return -1;}
-    String name(int t){switch(t){case 0:return "KHUNG";case 1:return "MOTOR";case 2:return "GIÁP";case 3:return "BÁNH TO";case 4:return "BÁNH NHỎ";case 5:return "BẢN LỀ";default:return "SÚNG";}}
+    int paletteType(float y){if(y<290)return 2;if(y<340)return 3;if(y<390)return 4;if(y<440)return 5;if(y<490)return 6;return -1;}
+    String name(int t){switch(t){case 0:return "THÂN XE";case 1:return "ĐẦU XE";case 2:return "GIÁP";case 3:return "BÁNH TO";case 4:return "BÁNH NHỎ";case 5:return "BẢN LỀ";default:return "SÚNG";}}
     void tryWeld(int i){
         if(i==0)return;Part a=parts.get(i);float best=999;int parent=-1;PointF aa=null,bb=null;for(int j=0;j<parts.size();j++)if(j!=i)for(PointF A:connectors(a))for(PointF B:connectors(parts.get(j))){float d=(float)Math.hypot(A.x-B.x,A.y-B.y);if(d<best){best=d;parent=j;aa=A;bb=B;}}if(best<55){a.x+=bb.x-aa.x;a.y+=bb.y-aa.y;a.weld=parent;if(a.type==Part.GUN&&parts.get(parent).type==Part.HINGE)a.angle=gunAngle;msg="ĐÃ HÀN: "+name(a.type)+" vào "+name(parts.get(parent).type);}else msg="Chưa khớp mấu nối";
     }
@@ -206,7 +234,7 @@ public class TankGameView extends View {
     @Override public boolean onTouchEvent(MotionEvent e){float x=(e.getX()-ox)/scale,y=(e.getY()-oy)/scale;return buildMode?touchBuilder(e,x,y):touchBattle(e,x,y);}
     void txt(Canvas c,String s,float x,float y,float size,boolean bold){p.setStyle(Paint.Style.FILL);p.setColor(Color.WHITE);p.setTextSize(size);p.setTypeface(Typeface.create(Typeface.DEFAULT,bold?Typeface.BOLD:Typeface.NORMAL));c.drawText(s,x,y,p);}
     void button(Canvas c,float l,float t,float r,float b,String s,int color){p.setStyle(Paint.Style.FILL);p.setColor(color);c.drawRoundRect(l,t,r,b,18,18,p);p.setColor(Color.WHITE);p.setTextSize(22);p.setTypeface(Typeface.DEFAULT_BOLD);float w=p.measureText(s);c.drawText(s,(l+r-w)/2,t+(b-t)/2+8,p);}
-    static class Part{static final int FRAME=0,MOTOR=1,ARMOR=2,BIG=3,SMALL=4,HINGE=5,GUN=6;int type,weld=-1;float x,y,angle;Part(int t,float x,float y){type=t;this.x=x;this.y=y;}}
+    static class Part{static final int BODY=0,HEAD=1,ARMOR=2,BIG=3,SMALL=4,HINGE=5,GUN=6;int type,weld=-1;float x,y,angle;Part(int t,float x,float y){type=t;this.x=x;this.y=y;}}
     static class Shot{float x,y,vx,vy,life=5;int damage;boolean enemy,dead;Shot(float x,float y,float a,float speed,int d,boolean e){this.x=x;this.y=y;vx=(float)Math.cos(a)*speed;vy=(float)Math.sin(a)*speed;damage=d;enemy=e;}void draw(Canvas c){if(dead)return;Paint q=new Paint(Paint.ANTI_ALIAS_FLAG);q.setColor(Color.argb(130,255,180,50));c.drawCircle(x,y,16,q);q.setColor(Color.rgb(250,235,100));c.drawCircle(x,y,9,q);}}
     class Enemy{float x,speed,aiAim;int hp,maxHp,armor,damage,fireMs;boolean boss;String name="";int aiMode=1,strafe=1,burst=0;boolean hit(float px,float py){float gy=terrainY(x)-35;return px>x-130&&px<x+130&&py>gy-115&&py<gy+60;}String aiLabel(){if(aiMode==0)return "TIẾN CÔNG";if(aiMode==2)return "LÙI / NÉ";return "GIỮ KHOẢNG CÁCH";}}
 }
