@@ -2,239 +2,692 @@ package com.tankadventures;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.graphics.*;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
+import android.graphics.Typeface;
 import android.view.MotionEvent;
 import android.view.View;
-import java.util.*;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.Locale;
+import java.util.Random;
 
 public class TankGameView extends View {
-    static final int VW=1280,VH=720,FIRE_COOLDOWN=2000;
-    static final int BUILD_VERSION=2, KV2_COST=500;
-    final Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);
-    final ArrayList<Part> parts=new ArrayList<>();
-    final ArrayList<Shot> shots=new ArrayList<>();
-    final SharedPreferences prefs;
-    final Bitmap ms1Body,ms1Head,kv2Body,kv2Head;
-    Enemy enemy;
-    float scale,ox,oy,gunAngle=18,bodyTilt=0,worldX=420,cameraX;
-    boolean buildMode=true,left,right,up,down,levelWon,levelLost;
-    int drag=-1,level=1,coins=0,playerHP=430,playerArmor=170,tankId=0;
-    float[] relX,relY;
-    long last,enemyNext,enemyThink,lastPlayerShot=0;
-    String msg="Kéo bộ phận vào mấu nối để HÀN";
+    private static final int VW = 1280;
+    private static final int VH = 720;
+    private static final int LEVELS = 15;
+    private static final int KV2_PRICE = 500;
+    private static final long PLAYER_FIRE_COOLDOWN = 2000L;
 
-    public TankGameView(Context c){
-        super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);
-        prefs=c.getSharedPreferences("tank_adventures",Context.MODE_PRIVATE);
-        coins=prefs.getInt("coins",0);
-        level=Math.max(1,Math.min(15,prefs.getInt("level",1)));
-        tankId=prefs.getInt("tank_id",0);
-        ms1Body=loadBitmap(c,"ms1body");ms1Head=loadBitmap(c,"ms1head");
-        kv2Body=loadBitmap(c,"kv2body");kv2Head=loadBitmap(c,"kv2head");
-        reset();last=System.currentTimeMillis();
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint imagePaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final SharedPreferences prefs;
+    private final Random random = new Random();
+    private final ArrayList<Projectile> projectiles = new ArrayList<>();
+
+    private Bitmap ms1Body;
+    private Bitmap ms1Head;
+    private Bitmap kv2Body;
+    private Bitmap kv2Head;
+
+    private TankPart bodyPart;
+    private TankPart headPart;
+    private TankType selectedTank = TankType.MS1;
+    private boolean kv2Owned;
+    private boolean buildMode = true;
+    private boolean leftPressed;
+    private boolean rightPressed;
+    private boolean upPressed;
+    private boolean downPressed;
+    private boolean levelWon;
+    private boolean levelLost;
+    private int level;
+    private int coins;
+    private int playerHp;
+    private int enemyHp;
+    private int enemyMaxHp;
+    private int dragPart = -1;
+    private float scale = 1f;
+    private float offsetX;
+    private float offsetY;
+    private float worldX = 450f;
+    private float enemyX;
+    private float headAngle = 12f;
+    private float dragDx;
+    private float dragDy;
+    private long lastFrame;
+    private long lastPlayerShot;
+    private long enemyNextShot;
+
+    private TankGameView(Context context, boolean ignored) {
+        super(context);
     }
 
-    Bitmap loadBitmap(Context c,String name){
-        int id=getResources().getIdentifier(name,"drawable",c.getPackageName());
-        return id==0?null:BitmapFactory.decodeResource(getResources(),id);
+    public TankGameView(Context context) {
+        super(context);
+        setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        prefs = context.getSharedPreferences("tank_adventures_clean", Context.MODE_PRIVATE);
+        level = clamp(prefs.getInt("level", 1), 1, LEVELS);
+        coins = Math.max(0, prefs.getInt("coins", 0));
+        kv2Owned = prefs.getBoolean("kv2_owned", false);
+        loadImages();
+        resetTankParts();
+        resetBattle();
+        lastFrame = System.currentTimeMillis();
     }
 
-    void reset(){
-        shots.clear();playerHP=430;playerArmor=170;levelWon=false;levelLost=false;worldX=420;
-        bodyTilt=0;loadBuild();
-        enemy=makeEnemy(level);long now=System.currentTimeMillis();enemyNext=now+1200;enemyThink=now+250;
-        lastPlayerShot=0;msg="MS-1 miễn phí • KV-2 mua bằng xu";
+    private void loadImages() {
+        ms1Body = BitmapFactory.decodeResource(getResources(), getResources().getIdentifier("ms1body", "drawable", getContext().getPackageName()));
+        ms1Head = BitmapFactory.decodeResource(getResources(), getResources().getIdentifier("ms1head", "drawable", getContext().getPackageName()));
+        kv2Body = BitmapFactory.decodeResource(getResources(), getResources().getIdentifier("kv2body", "drawable", getContext().getPackageName()));
+        kv2Head = BitmapFactory.decodeResource(getResources(), getResources().getIdentifier("kv2head", "drawable", getContext().getPackageName()));
     }
 
-    void defaultBuild(){
-        parts.clear();
-        add(Part.BODY,260,455,-1);add(Part.HEAD,315,390,0);
-        add(Part.ARMOR,260,420,0);add(Part.BIG,170,515,0);add(Part.BIG,275,515,0);
-        add(Part.SMALL,225,530,0);add(Part.HINGE,325,370,1);add(Part.GUN,380,370,6);
-        parts.get(parts.size()-1).angle=18;makeRelative();
+    private Bitmap bodyBitmap() {
+        return selectedTank == TankType.MS1 ? ms1Body : kv2Body;
     }
 
-    void loadBuild(){
-        int version=prefs.getInt("build_version",0);
-        if(version!=BUILD_VERSION){defaultBuild();saveBuild();return;}
-        String data=prefs.getString("saved_build","");
-        if(data.length()==0){defaultBuild();saveBuild();return;}
-        try{
-            parts.clear();String[] rows=data.split(";");
-            for(String row:rows){if(row.trim().length()==0)continue;String[] v=row.split(",");if(v.length<5)throw new Exception();Part a=new Part(Integer.parseInt(v[0]),Float.parseFloat(v[1]),Float.parseFloat(v[2]));a.weld=Integer.parseInt(v[3]);a.angle=Float.parseFloat(v[4]);parts.add(a);}
-            if(parts.size()==0||parts.get(0).type!=Part.BODY)throw new Exception();
-            makeRelative();Part g=first(Part.GUN);if(g!=null)gunAngle=g.angle;
-        }catch(Exception ex){defaultBuild();saveBuild();}
+    private Bitmap headBitmap() {
+        return selectedTank == TankType.MS1 ? ms1Head : kv2Head;
     }
 
-    void saveBuild(){
-        StringBuilder s=new StringBuilder();
-        for(Part a:parts)s.append(a.type).append(',').append(a.x).append(',').append(a.y).append(',').append(a.weld).append(',').append(a.angle).append(';');
-        prefs.edit().putString("saved_build",s.toString()).putInt("build_version",BUILD_VERSION).apply();
+    private void resetTankParts() {
+        bodyPart = new TankPart(TankPart.BODY, 470f, 430f);
+        headPart = new TankPart(TankPart.HEAD, 600f, 300f);
+        headPart.welded = true;
+        headAngle = selectedTank == TankType.MS1 ? 10f : 12f;
     }
 
-    void add(int type,float x,float y,int parent){Part a=new Part(type,x,y);a.weld=parent;parts.add(a);}
-    void makeRelative(){
-        if(parts.isEmpty())return;Part r=parts.get(0);relX=new float[parts.size()];relY=new float[parts.size()];
-        for(int i=0;i<parts.size();i++){relX[i]=parts.get(i).x-r.x;relY[i]=parts.get(i).y-r.y;}
+    private void resetBattle() {
+        projectiles.clear();
+        worldX = 450f;
+        enemyX = 2600f + level * 120f;
+        playerHp = selectedTank == TankType.MS1 ? 380 : 620;
+        enemyMaxHp = 260 + level * 55;
+        enemyHp = enemyMaxHp;
+        levelWon = false;
+        levelLost = false;
+        lastPlayerShot = 0L;
+        enemyNextShot = System.currentTimeMillis() + 1300L;
     }
-    int count(int type){int n=0;for(Part a:parts)if(a.type==type&&a.weld>=0)n++;return n;}
-    Part first(int type){for(Part a:parts)if(a.type==type&&a.weld>=0)return a;return null;}
-    ArrayList<Integer> guns(){ArrayList<Integer> r=new ArrayList<>();for(int i=0;i<parts.size();i++)if(parts.get(i).type==Part.GUN&&parts.get(i).weld>=0)r.add(i);return r;}
-    int hingeIndex(){for(int i=0;i<parts.size();i++)if(parts.get(i).type==Part.HINGE&&parts.get(i).weld>=0)return i;return -1;}
 
-    boolean isKV2(){return tankId==1;}
-    String tankName(){return isKV2()?"KV-2":"MS-1";}
-    Bitmap tankBody(){return isKV2()?kv2Body:ms1Body;}
-    Bitmap tankHead(){return isKV2()?kv2Head:ms1Head;}
+    private void saveProgress() {
+        prefs.edit()
+                .putInt("level", level)
+                .putInt("coins", coins)
+                .putBoolean("kv2_owned", kv2Owned)
+                .apply();
+    }
 
-    void switchTank(){
-        if(tankId==0){
-            if(coins<KV2_COST){msg="Cần "+KV2_COST+" xu để mở KV-2";return;}
-            coins-=KV2_COST;tankId=1;prefs.edit().putInt("coins",coins).putInt("tank_id",tankId).apply();
-            defaultBuild();saveBuild();msg="Đã mua KV-2 • -"+KV2_COST+" xu";
-        }else{
-            tankId=0;prefs.edit().putInt("tank_id",tankId).apply();defaultBuild();saveBuild();msg="Đã đổi sang MS-1 miễn phí";
+    @Override
+    protected void onDraw(Canvas canvas) {
+        long now = System.currentTimeMillis();
+        float dt = Math.min(0.033f, Math.max(0f, (now - lastFrame) / 1000f));
+        lastFrame = now;
+
+        scale = Math.min(getWidth() / (float) VW, getHeight() / (float) VH);
+        offsetX = (getWidth() - VW * scale) * 0.5f;
+        offsetY = (getHeight() - VH * scale) * 0.5f;
+
+        canvas.save();
+        canvas.translate(offsetX, offsetY);
+        canvas.scale(scale, scale);
+
+        if (buildMode) {
+            drawBuildScreen(canvas);
+        } else {
+            if (!levelWon && !levelLost) updateBattle(dt, now);
+            drawBattleScreen(canvas);
+        }
+
+        canvas.restore();
+        postInvalidateDelayed(16L);
+    }
+
+    private void drawBuildScreen(Canvas c) {
+        drawBackground(c);
+        text(c, "TANK ADVENTURES", 35, 42, 34, true);
+        text(c, "LẮP RÁP XE", 35, 76, 22, false);
+        text(c, "MÀN " + level + " / " + LEVELS + "    XU: " + coins, 880, 42, 21, true);
+
+        panel(c, 35, 105, 840, 575, Color.argb(145, 20, 28, 34));
+        text(c, "THÂN + ĐẦU XE", 65, 143, 24, true);
+        text(c, "Thân chỉ là thân xe. Độ nghiêng của thân tự bám theo dốc.", 65, 174, 17, false);
+
+        drawAssemblyPreview(c);
+
+        panel(c, 890, 100, 1250, 570, Color.argb(230, 30, 35, 40));
+        text(c, "CHỌN XE", 925, 140, 24, true);
+        tankChoice(c, TankType.MS1, 915, 165, 1215, 245);
+        tankChoice(c, TankType.KV2, 915, 265, 1215, 345);
+
+        text(c, "Bộ phận của xe đã chọn", 925, 390, 19, true);
+        smallPart(c, "THÂN XE", bodyBitmap(), 915, 410, 1045, 500, 0f);
+        smallPart(c, "ĐẦU XE", headBitmap(), 1070, 410, 1200, 500, -headAngle);
+
+        if (selectedTank == TankType.KV2 && !kv2Owned) {
+            button(c, 925, 520, 1215, 565, "MUA KV-2 • 500 XU", Color.rgb(180, 125, 45));
+        } else {
+            button(c, 925, 520, 1215, 565, "ĐÃ CHỌN", Color.rgb(60, 145, 85));
+        }
+
+        button(c, 900, 605, 1065, 685, "CHIẾN ĐẤU", Color.rgb(55, 145, 75));
+        button(c, 1080, 605, 1245, 685, "ĐẶT LẠI", Color.rgb(165, 75, 55));
+
+        panel(c, 35, 590, 840, 695, Color.argb(215, 25, 25, 25));
+        text(c, "Kéo ĐẦU XE vào trên THÂN XE để lắp.", 60, 625, 19, true);
+        text(c, "Trong trận: ▲▼ chỉ nâng/hạ ĐẦU XE. THÂN XE không có điều khiển lên/xuống.", 60, 660, 16, false);
+    }
+
+    private void drawAssemblyPreview(Canvas c) {
+        Bitmap body = bodyBitmap();
+        Bitmap head = headBitmap();
+        if (body != null) {
+            RectF dst = fitRect(body, 180, 360, 560, 560);
+            c.drawBitmap(body, null, dst, imagePaint);
+        }
+        if (head != null) {
+            c.save();
+            c.rotate(-headAngle, 600, 345);
+            RectF dst = fitRect(head, 545, 250, 760, 410);
+            c.drawBitmap(head, null, dst, imagePaint);
+            c.restore();
+        }
+        if (dragPart == 1) {
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(5);
+            paint.setColor(Color.YELLOW);
+            c.drawCircle(600, 345, 80, paint);
+            paint.setStyle(Paint.Style.FILL);
         }
     }
 
-    Enemy makeEnemy(int lv){
-        Enemy e=new Enemy();e.x=2250+lv*180;e.hp=250+lv*48;e.maxHp=e.hp;e.armor=100+lv*20;e.damage=22+lv*2;e.fireMs=Math.max(850,1900-lv*55);e.speed=15+lv*1.6f;e.boss=lv%5==0;
-        if(e.boss){e.hp+=220;e.maxHp=e.hp;e.armor+=90;e.damage+=8;e.fireMs=Math.max(650,e.fireMs-180);e.speed+=5;}
-        e.name=e.boss?"BOSS":"XE ĐỊCH "+lv;return e;
-    }
-    float terrainY(float x){float phase=level*.63f;return 470+55*(float)Math.sin(x/260f+phase)+32*(float)Math.sin(x/105f+level)+18*(float)Math.sin(x/53f+2);}
-    float terrainSlope(float x){return (terrainY(x+2)-terrainY(x-2))/4f;}
-    int levelLength(){return 4500+level*260;}
-
-    @Override protected void onDraw(Canvas c){
-        scale=Math.min(getWidth()/1280f,getHeight()/720f);ox=(getWidth()-VW*scale)/2f;oy=(getHeight()-VH*scale)/2f;c.save();c.translate(ox,oy);c.scale(scale,scale);
-        long now=System.currentTimeMillis();float dt=Math.min(.033f,Math.max(0,(now-last)/1000f));last=now;
-        if(buildMode)drawBuilder(c);else{if(!levelWon&&!levelLost)updateBattle(dt,now);drawBattle(c);}c.restore();postInvalidateDelayed(16);
-    }
-    void bg(Canvas c){p.setStyle(Paint.Style.FILL);p.setColor(Color.rgb(67,151,196));c.drawRect(0,0,VW,VH,p);p.setColor(Color.argb(55,255,255,255));c.drawCircle(170,100,35,p);c.drawCircle(215,88,48,p);c.drawCircle(263,105,32,p);c.drawCircle(850,125,34,p);c.drawCircle(895,115,52,p);c.drawCircle(952,130,30,p);}
-
-    void drawBuilder(Canvas c){
-        bg(c);txt(c,"TANK ADVENTURES — LẮP RÁP",30,42,34,true);txt(c,"MÀN "+level+" / 15     XU: "+coins,30,75,21,false);
-        p.setColor(Color.argb(95,20,30,35));c.drawRoundRect(35,105,850,575,24,24,p);txt(c,"KHU VỰC LẮP RÁP",70,145,22,true);
-        for(int i=0;i<parts.size();i++)drawPart(c,parts.get(i),i);
-        p.setColor(Color.argb(220,27,32,38));c.drawRoundRect(880,95,1250,575,24,24,p);txt(c,"CHỌN XE",915,130,25,true);
-        button(c,900,145,1060,200,"MS-1 FREE",Color.rgb(55,125,90));
-        button(c,1070,145,1230,200,isKV2()?"KV-2 ĐÃ MỞ":"KV-2 500 XU",Color.rgb(135,85,45));
-        txt(c,"ĐANG DÙNG: "+tankName(),915,225,18,true);
-        palette(c,"GIÁP",2,265);palette(c,"BÁNH TO",3,315);palette(c,"BÁNH NHỎ",4,365);palette(c,"BẢN LỀ",5,415);palette(c,"SÚNG",6,465);
-        p.setColor(Color.argb(210,25,25,25));c.drawRoundRect(35,600,850,695,18,18,p);txt(c,msg,60,632,21,false);txt(c,"Thân + đầu xe dùng ảnh riêng • kéo bộ phận vào mấu nối để HÀN.",60,665,18,false);
-        button(c,900,605,1075,685,"CHIẾN ĐẤU",Color.rgb(55,145,70));button(c,1095,605,1245,685,"RESET",Color.rgb(175,75,55));
-    }
-    void palette(Canvas c,String s,int type,float y){p.setColor(Color.rgb(58,68,76));c.drawRoundRect(905,y-20,1225,y+22,12,12,p);txt(c,s,930,y+7,18,true);p.setColor(Color.rgb(90,235,215));c.drawCircle(1190,y,11,p);}
-    int partColor(int t){switch(t){case Part.BODY:return Color.rgb(48,60,68);case Part.HEAD:return Color.rgb(95,105,112);case Part.ARMOR:return Color.rgb(125,136,140);case Part.BIG:return Color.rgb(45,47,50);case Part.SMALL:return Color.rgb(63,65,69);case Part.HINGE:return Color.rgb(185,145,52);default:return Color.rgb(65,87,105);}}
-    ArrayList<PointF> connectors(Part a){ArrayList<PointF> r=new ArrayList<>();if(a.type==Part.BODY){r.add(new PointF(a.x-90,a.y));r.add(new PointF(a.x,a.y-35));r.add(new PointF(a.x+90,a.y));r.add(new PointF(a.x,a.y+35));}else if(a.type==Part.HINGE){r.add(new PointF(a.x,a.y));r.add(new PointF(a.x+28,a.y));}else r.add(new PointF(a.x,a.y));return r;}
-
-    void drawPart(Canvas c,Part a,int i){
-        p.setStyle(Paint.Style.FILL);p.setColor(partColor(a.type));
-        if(a.type==Part.BODY){drawBitmapFit(c,tankBody(),a.x-130,a.y-55,a.x+130,a.y+55);if(tankBody()==null)c.drawRoundRect(a.x-130,a.y-35,a.x+130,a.y+35,18,18,p);}
-        else if(a.type==Part.HEAD){drawBitmapFit(c,tankHead(),a.x-95,a.y-62,a.x+95,a.y+5);if(tankHead()==null)c.drawRoundRect(a.x-90,a.y-35,a.x+90,a.y+15,18,18,p);}
-        else if(a.type==Part.ARMOR){Path q=new Path();q.moveTo(a.x-90,a.y+28);q.lineTo(a.x-60,a.y-30);q.lineTo(a.x+75,a.y-30);q.lineTo(a.x+95,a.y+28);q.close();c.drawPath(q,p);}
-        else if(a.type==Part.BIG||a.type==Part.SMALL){float r=a.type==Part.BIG?38:25;c.drawCircle(a.x,a.y,r,p);p.setColor(Color.rgb(155,155,155));c.drawCircle(a.x,a.y,r*.48f,p);}
-        else if(a.type==Part.HINGE){c.drawCircle(a.x,a.y,23,p);p.setColor(Color.rgb(40,40,40));c.drawCircle(a.x,a.y,8,p);}
-        else{p.setStrokeWidth(16);p.setStrokeCap(Paint.Cap.ROUND);float r=(float)Math.toRadians(a.angle);c.drawLine(a.x,a.y,a.x+150*(float)Math.cos(r),a.y-150*(float)Math.sin(r),p);}
-        p.setColor(Color.rgb(90,235,215));for(PointF q:connectors(a))c.drawCircle(q.x,q.y,7,p);if(i==drag){p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(3);p.setColor(Color.YELLOW);c.drawCircle(a.x,a.y,48,p);p.setStyle(Paint.Style.FILL);}if(a.weld>=0)txt(c,"HÀN",a.x-17,a.y+55,14,false);
+    private void tankChoice(Canvas c, TankType type, float l, float t, float r, float b) {
+        boolean selected = selectedTank == type;
+        boolean locked = type == TankType.KV2 && !kv2Owned;
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(selected ? Color.rgb(70, 125, 80) : Color.rgb(55, 63, 68));
+        c.drawRoundRect(l, t, r, b, 18, 18, paint);
+        String name = type == TankType.MS1 ? "MS-1  •  MIỄN PHÍ" : (locked ? "KV-2  •  500 XU" : "KV-2  •  ĐÃ MUA");
+        text(c, name, l + 18, t + 32, 20, true);
+        Bitmap body = type == TankType.MS1 ? ms1Body : kv2Body;
+        Bitmap head = type == TankType.MS1 ? ms1Head : kv2Head;
+        if (body != null) c.drawBitmap(body, null, fitRect(body, l + 15, t + 38, l + 150, b - 8), imagePaint);
+        if (head != null) c.drawBitmap(head, null, fitRect(head, l + 150, t + 38, l + 285, b - 8), imagePaint);
     }
 
-    void drawBitmapFit(Canvas c,Bitmap b,float l,float t,float r,float bot){if(b==null)return;Rect src=new Rect(0,0,b.getWidth(),b.getHeight());RectF dst=new RectF(l,t,r,bot);p.setFilterBitmap(true);c.drawBitmap(b,src,dst,p);}
-
-    void drawBattle(Canvas c){
-        drawWorld(c);txt(c,"MÀN "+level+"/15",25,34,24,true);txt(c,tankName()+"   HP "+playerHP+"   GIÁP "+playerArmor,25,64,22,true);txt(c,"XU "+coins,25,92,20,false);txt(c,"ENEMY "+Math.max(0,enemy.hp),1020,34,24,true);txt(c,enemy.name,1020,62,18,false);txt(c,"AI: "+enemy.aiLabel(),1020,88,16,false);txt(c,"NÒNG "+(int)gunAngle+"°  THÂN "+(int)bodyTilt+"°",25,120,18,false);
-        long remain=Math.max(0,FIRE_COOLDOWN-(System.currentTimeMillis()-lastPlayerShot));txt(c,remain==0?"SẴN":"HỒI "+(remain/1000f<1?"<1":(remain/1000)+"s"),25,145,18,true);
-        button(c,20,585,115,685,"◀",Color.rgb(55,80,100));button(c,125,585,220,685,"▶",Color.rgb(55,80,100));button(c,230,585,325,685,"▲",Color.rgb(125,95,55));button(c,330,585,425,685,"▼",Color.rgb(125,95,55));button(c,875,585,1060,685,"LẮP RÁP",Color.rgb(60,130,75));button(c,1080,585,1250,685,"BẮN",Color.rgb(185,55,45));
-        if(levelWon){p.setColor(Color.argb(225,20,80,30));c.drawRoundRect(330,220,950,500,28,28,p);txt(c,"VICTORY!",500,300,58,true);txt(c,"+100 XU",545,350,30,true);if(level<15)button(c,490,390,790,465,"MÀN TIẾP",Color.rgb(55,145,70));else txt(c,"HOÀN THÀNH 15 MÀN!",440,410,27,true);}
-        if(levelLost){p.setColor(Color.argb(225,90,25,25));c.drawRoundRect(330,220,950,500,28,28,p);txt(c,"DEFEAT",530,300,58,true);button(c,490,390,790,465,"CHƠI LẠI",Color.rgb(175,75,55));}
-    }
-    void drawWorld(Canvas c){bg(c);cameraX=Math.max(0,Math.min(Math.max(0,levelLength()-VW),worldX-500));c.save();c.translate(-cameraX,0);drawTerrain(c);drawFinish(c);drawPlayer(c);if(enemy.hp>0)drawEnemy(c);for(Shot s:shots)s.draw(c);c.restore();}
-    void drawTerrain(Canvas c){float l=cameraX-100,r=cameraX+1380;p.setStyle(Paint.Style.FILL);p.setColor(Color.rgb(103,179,83));Path q=new Path();q.moveTo(l,terrainY(l));for(float x=l;x<=r;x+=20)q.lineTo(x,terrainY(x));q.lineTo(r,VH);q.lineTo(l,VH);q.close();c.drawPath(q,p);p.setColor(Color.rgb(174,220,111));Path t=new Path();t.moveTo(l,terrainY(l)-20);for(float x=l;x<=r;x+=20)t.lineTo(x,terrainY(x)-20);t.lineTo(r,terrainY(r)-20);t.lineTo(l,terrainY(l)-20);t.close();c.drawPath(t,p);}
-    void drawFinish(Canvas c){float x=levelLength()-180,y=terrainY(x);p.setColor(Color.DKGRAY);c.drawRect(x,y-170,x+10,y,p);p.setColor(Color.RED);Path f=new Path();f.moveTo(x+10,y-170);f.lineTo(x+120,y-145);f.lineTo(x+10,y-120);f.close();c.drawPath(f,p);txt(c,"FINISH",x-20,y-190,20,true);}
-
-    float battleBaseY(){float maxBottom=35;for(int i=0;i<parts.size();i++)if(parts.get(i).weld>=0||i==0){Part a=parts.get(i);float h=a.type==Part.BIG?40:a.type==Part.SMALL?27:a.type==Part.BODY?35:a.type==Part.HEAD?30:a.type==Part.ARMOR?30:a.type==Part.GUN?8:20;maxBottom=Math.max(maxBottom,relY[i]+h);}return terrainY(worldX)-maxBottom-2;}
-    float[] localToWorld(float lx,float ly,float baseY,float bodyRad){return new float[]{worldX+lx*(float)Math.cos(bodyRad)-ly*(float)Math.sin(bodyRad),baseY+lx*(float)Math.sin(bodyRad)+ly*(float)Math.cos(bodyRad)};}
-
-    void drawPlayer(Canvas c){
-        if(parts.isEmpty())return;float baseY=battleBaseY();float bodyRad=(float)Math.toRadians((float)Math.toDegrees(Math.atan(terrainSlope(worldX)))+bodyTilt);c.save();c.translate(worldX,baseY);c.rotate((float)Math.toDegrees(bodyRad));int hi=hingeIndex();for(int i=0;i<parts.size();i++){Part a=parts.get(i);if((i==0||a.weld>=0)&&a.type!=Part.GUN)drawLocal(c,a,relX[i],relY[i]);}if(hi>=0){float hx=relX[hi],hy=relY[hi];for(int i:guns())drawGunAtPivot(c,hx,hy);p.setColor(Color.rgb(185,145,52));c.drawCircle(hx,hy,10,p);}else for(int i:guns())drawLocal(c,parts.get(i),relX[i],relY[i]);c.restore();
-    }
-
-    void drawLocal(Canvas c,Part a,float x,float y){
-        p.setStyle(Paint.Style.FILL);p.setColor(partColor(a.type));
-        if(a.type==Part.BODY){drawBitmapFit(c,tankBody(),x-130,y-55,x+130,y+55);if(tankBody()==null)c.drawRoundRect(x-130,y-35,x+130,y+35,18,18,p);}
-        else if(a.type==Part.HEAD){drawBitmapFit(c,tankHead(),x-95,y-62,x+95,y+5);if(tankHead()==null)c.drawRoundRect(x-90,y-35,x+90,y+15,18,18,p);}
-        else if(a.type==Part.ARMOR){Path q=new Path();q.moveTo(x-90,y+28);q.lineTo(x-60,y-30);q.lineTo(x+75,y-30);q.lineTo(x+95,y+28);q.close();c.drawPath(q,p);}
-        else if(a.type==Part.BIG||a.type==Part.SMALL){float r=a.type==Part.BIG?40:27;c.drawCircle(x,y,r,p);p.setColor(Color.rgb(145,145,145));c.drawCircle(x,y,r*.48f,p);}
-        else if(a.type==Part.HINGE){c.drawCircle(x,y,20,p);p.setColor(Color.rgb(40,40,40));c.drawCircle(x,y,8,p);}
-        else{drawGunAtPivot(c,x,y);}
-    }
-
-    void drawGunAtPivot(Canvas c,float x,float y){p.setColor(Color.rgb(45,45,45));p.setStrokeWidth(17);p.setStrokeCap(Paint.Cap.ROUND);float r=(float)Math.toRadians(gunAngle);c.drawLine(x,y,x+155*(float)Math.cos(r),y-155*(float)Math.sin(r),p);p.setColor(Color.rgb(100,100,100));c.drawCircle(x,y,18,p);}
-
-    void drawEnemy(Canvas c){float x=enemy.x,y=terrainY(x)-35;p.setStyle(Paint.Style.FILL);p.setColor(Color.argb(60,0,0,0));c.drawOval(x-145,y+25,x+145,y+65,p);p.setColor(Color.rgb(55,55,58));c.drawRoundRect(x-145,y-20,x+145,y+55,28,28,p);p.setColor(Color.rgb(145,145,145));for(int i=0;i<7;i++)c.drawCircle(x-105+i*35,y+20,13,p);p.setColor(enemy.boss?Color.rgb(115,55,55):Color.rgb(125,75,60));Path h=new Path();h.moveTo(x-120,y-55);h.lineTo(x+100,y-55);h.lineTo(x+125,y+5);h.lineTo(x-105,y+5);h.close();c.drawPath(h,p);p.setColor(enemy.boss?Color.rgb(75,45,45):Color.rgb(95,60,55));c.drawRoundRect(x-50,y-108,x+60,y-50,22,22,p);p.setColor(Color.rgb(45,45,45));p.setStrokeWidth(17);p.setStrokeCap(Paint.Cap.ROUND);c.drawLine(x+12,y-78,x+145,y-78,p);p.setColor(Color.rgb(190,190,175));c.drawCircle(x+112,y-15,22,p);p.setColor(Color.argb(160,0,0,0));c.drawRect(x-120,y-150,x+120,y-136,p);p.setColor(Color.rgb(70,220,85));c.drawRect(x-120,y-150,x-120+240*Math.max(0,enemy.hp)/(float)enemy.maxHp,y-136,p);}
-
-    void updateBattle(float dt,long now){
-        float speed=135+count(Part.BODY)*55;if(right)worldX=Math.min(levelLength()-250,worldX+speed*dt);if(left)worldX=Math.max(120,worldX-speed*dt);
-        if(up)bodyTilt=Math.max(-18,bodyTilt-55*dt);if(down)bodyTilt=Math.min(18,bodyTilt+55*dt);
-        for(Part a:parts)if(a.type==Part.GUN)a.angle=gunAngle;
-        if(enemy.hp>0)updateEnemyAI(dt,now);
-        for(Shot s:shots){if(s.dead)continue;s.vy+=760*dt;s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt;if(s.y>terrainY(s.x)-5){s.y=terrainY(s.x)-5;s.dead=true;continue;}if(s.life<=0){s.dead=true;continue;}if(s.enemy&&hitPlayer(s.x,s.y)){s.dead=true;damagePlayer(s.damage);}else if(!s.enemy&&enemy.hp>0&&enemy.hit(s.x,s.y)){s.dead=true;damageEnemy(s.damage);}}
-        Iterator<Shot>it=shots.iterator();while(it.hasNext())if(it.next().dead)it.remove();
-        if(enemy.hp<=0&&!levelWon){levelWon=true;coins+=100;prefs.edit().putInt("coins",coins).apply();}
-        if(playerHP<=0)levelLost=true;
-    }
-
-    void updateEnemyAI(float dt,long now){
-        float distance=enemy.x-worldX;int desiredMode;if(distance>1050)desiredMode=0;else if(distance<520)desiredMode=2;else desiredMode=1;
-        if(now>=enemyThink){enemy.aiMode=desiredMode;if(Math.abs(distance)<900&&!enemy.boss&&Math.random()<0.25)enemy.strafe=-enemy.strafe;if(enemy.boss&&Math.random()<0.30)enemy.strafe=-enemy.strafe;enemyThink=now+260;}
-        float move;if(enemy.aiMode==0)move=-enemy.speed;else if(enemy.aiMode==2)move=enemy.speed;else move=enemy.speed*.35f*enemy.strafe;
-        for(Shot s:shots)if(!s.enemy&&!s.dead&&Math.abs(s.x-enemy.x)<260){float futureY=s.y+s.vy*.18f;float ey=terrainY(enemy.x)-70;if(Math.abs(futureY-ey)<95){move+=(s.x<enemy.x?enemy.speed*.9f:-enemy.speed*.9f);break;}}
-        enemy.x+=move*dt;enemy.x=Math.max(worldX+430,Math.min(levelLength()-260,enemy.x));
-        float ex=enemy.x-125,ey=terrainY(enemy.x)-110;float playerVelocity=(right?135+count(Part.BODY)*55:0)-(left?135+count(Part.BODY)*55:0);float dx=worldX-ex;float dy=(terrainY(worldX)-90)-ey;float flight=Math.max(.35f,Math.abs(dx)/590f);float predictedX=worldX+playerVelocity*flight;predictedX=Math.max(120,Math.min(levelLength()-250,predictedX));dx=predictedX-ex;dy=(terrainY(predictedX)-90)-ey;float vx=590*Math.signum(dx);if(Math.abs(dx)<1)vx=590;float vy=(dy-.5f*760*flight*flight)/flight;enemy.aiAim=(float)Math.atan2(vy,vx);
-        if(now>=enemyNext&&playerHP>0&&enemy.hp>0){float range=Math.abs(worldX-enemy.x);if(range<1750){shots.add(new Shot(ex,ey,enemy.aiAim,590,enemy.damage,true));if(enemy.boss&&enemy.burst<2){enemy.burst++;enemyNext=now+260;}else{enemy.burst=0;enemyNext=now+enemy.fireMs;}}else enemyNext=now+250;}
-    }
-
-    boolean hitPlayer(float x,float y){float py=battleBaseY();return Math.abs(x-worldX)<155&&y>py-150&&y<py+55;}
-    void damagePlayer(int d){int a=Math.min(playerArmor,Math.round(d*.5f));playerArmor-=a;playerHP=Math.max(0,playerHP-(d-a));}
-    void damageEnemy(int d){int a=Math.min(enemy.armor,Math.round(d*.45f));enemy.armor-=a;enemy.hp=Math.max(0,enemy.hp-(d-a));}
-
-    void fire(){
-        long now=System.currentTimeMillis();if(now-lastPlayerShot<FIRE_COOLDOWN){msg="ĐANG HỒI NÒNG "+Math.max(1,(FIRE_COOLDOWN-(now-lastPlayerShot)+999)/1000)+"s";return;}
-        if(playerHP<=0||enemy.hp<=0||levelWon||levelLost)return;ArrayList<Integer> gs=guns();if(gs.size()==0)return;
-        float baseY=battleBaseY();float terrainRad=(float)Math.atan(terrainSlope(worldX));float bodyRad=terrainRad+(float)Math.toRadians(bodyTilt);int hi=hingeIndex();float hx=hi>=0?relX[hi]:0,hy=hi>=0?relY[hi]:0;
-        float[] pivot=localToWorld(hx,hy,baseY,bodyRad);float totalRad=bodyRad-(float)Math.toRadians(gunAngle);float speed=650+count(Part.BODY)*30;
-        for(int gi:gs){float muzzleX=pivot[0]+155*(float)Math.cos(totalRad);float muzzleY=pivot[1]+155*(float)Math.sin(totalRad);shots.add(new Shot(muzzleX,muzzleY,totalRad,speed,32,false));}
-        lastPlayerShot=now;msg="ĐÃ BẮN "+gs.size()+" NÒNG TỪ ĐẦU NÒNG";
-    }
-
-    boolean touchBuilder(MotionEvent e,float x,float y){
-        int a=e.getActionMasked();if(a==MotionEvent.ACTION_DOWN){
-            if(x>895&&y>590&&x<1080){makeRelative();saveBuild();buildMode=false;return true;}
-            if(x>1085&&y>590){defaultBuild();saveBuild();return true;}
-            if(x>=900&&x<=1065&&y>=140&&y<=205){tankId=0;prefs.edit().putInt("tank_id",0).apply();defaultBuild();saveBuild();msg="Đã chọn MS-1 miễn phí";return true;}
-            if(x>=1065&&x<=1240&&y>=140&&y<=205){switchTank();return true;}
-            if(x>895&&x<1240&&y>235&&y<490){int t=paletteType(y);if(t>=0){Part z=new Part(t,650,300);z.weld=-1;z.angle=gunAngle;parts.add(z);drag=parts.size()-1;msg="Đang kéo "+name(t);return true;}}
-            for(int i=parts.size()-1;i>=0;i--){Part z=parts.get(i);if(Math.hypot(x-z.x,y-z.y)<72){drag=i;return true;}}
+    private void smallPart(Canvas c, String label, Bitmap bitmap, float l, float t, float r, float b, float angle) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.rgb(52, 60, 66));
+        c.drawRoundRect(l, t, r, b, 14, 14, paint);
+        if (bitmap != null) {
+            c.save();
+            c.rotate(angle, (l + r) * 0.5f, (t + b) * 0.5f);
+            c.drawBitmap(bitmap, null, fitRect(bitmap, l + 8, t + 20, r - 8, b - 12), imagePaint);
+            c.restore();
         }
-        if((a==MotionEvent.ACTION_MOVE||a==MotionEvent.ACTION_UP)&&drag>=0){Part z=parts.get(drag);z.x=x;z.y=y;if(a==MotionEvent.ACTION_UP){tryWeld(drag);drag=-1;saveBuild();}invalidate();return true;}return true;
-    }
-    int paletteType(float y){if(y<290)return 2;if(y<340)return 3;if(y<390)return 4;if(y<440)return 5;if(y<490)return 6;return -1;}
-    String name(int t){switch(t){case 0:return "THÂN XE";case 1:return "ĐẦU XE";case 2:return "GIÁP";case 3:return "BÁNH TO";case 4:return "BÁNH NHỎ";case 5:return "BẢN LỀ";default:return "SÚNG";}}
-    void tryWeld(int i){
-        if(i==0)return;Part a=parts.get(i);float best=999;int parent=-1;PointF aa=null,bb=null;for(int j=0;j<parts.size();j++)if(j!=i)for(PointF A:connectors(a))for(PointF B:connectors(parts.get(j))){float d=(float)Math.hypot(A.x-B.x,A.y-B.y);if(d<best){best=d;parent=j;aa=A;bb=B;}}if(best<55){a.x+=bb.x-aa.x;a.y+=bb.y-aa.y;a.weld=parent;if(a.type==Part.GUN&&parts.get(parent).type==Part.HINGE)a.angle=gunAngle;msg="ĐÃ HÀN: "+name(a.type)+" vào "+name(parts.get(parent).type);}else msg="Chưa khớp mấu nối";
+        text(c, label, l + 8, t + 18, 13, true);
     }
 
-    boolean touchBattle(MotionEvent e,float x,float y){
-        int a=e.getActionMasked();if(a==MotionEvent.ACTION_DOWN||a==MotionEvent.ACTION_MOVE){left=x<120&&y>570;right=x>=120&&x<225&&y>570;up=x>=225&&x<325&&y>570;down=x>=325&&x<425&&y>570;if(a==MotionEvent.ACTION_DOWN&&x>1075&&y>570){fire();return true;}if(a==MotionEvent.ACTION_DOWN&&x>870&&x<1070&&y>570){makeRelative();saveBuild();buildMode=true;return true;}if(a==MotionEvent.ACTION_DOWN&&levelWon&&level<15&&x>480&&x<800&&y>380&&y<480){nextLevel();return true;}if(a==MotionEvent.ACTION_DOWN&&levelLost&&x>480&&x<800&&y>380&&y<480){retryLevel();return true;}return true;}left=right=up=down=false;return true;
+    private void drawBattleScreen(Canvas c) {
+        drawBackground(c);
+        float camera = Math.max(0f, Math.min(levelLength() - VW, worldX - 470f));
+        c.save();
+        c.translate(-camera, 0);
+        drawTerrain(c, camera);
+        drawFinish(c);
+        drawPlayer(c);
+        drawEnemy(c);
+        for (Projectile projectile : projectiles) projectile.draw(c);
+        c.restore();
+
+        text(c, "MÀN " + level + "/" + LEVELS, 25, 34, 23, true);
+        text(c, "HP " + playerHp, 25, 63, 21, true);
+        text(c, "XU " + coins, 25, 91, 19, false);
+        text(c, selectedTank == TankType.MS1 ? "MS-1" : "KV-2", 25, 118, 19, true);
+        text(c, "ĐẦU XE " + (int) headAngle + "°", 25, 145, 18, false);
+        text(c, "ENEMY " + Math.max(0, enemyHp), 1025, 34, 22, true);
+        text(c, "MÁU BẠN / ĐỊCH", 1025, 61, 15, false);
+
+        long remain = Math.max(0L, PLAYER_FIRE_COOLDOWN - (System.currentTimeMillis() - lastPlayerShot));
+        text(c, remain == 0 ? "BẮN SẴN" : "HỒI " + String.format(Locale.US, "%.1fs", remain / 1000f), 25, 173, 17, true);
+
+        button(c, 20, 585, 115, 685, "◀", Color.rgb(55, 80, 100));
+        button(c, 125, 585, 220, 685, "▶", Color.rgb(55, 80, 100));
+        button(c, 230, 585, 325, 685, "▲", Color.rgb(125, 95, 55));
+        button(c, 330, 585, 425, 685, "▼", Color.rgb(125, 95, 55));
+        button(c, 875, 585, 1060, 685, "LẮP RÁP", Color.rgb(60, 130, 75));
+        button(c, 1080, 585, 1250, 685, "BẮN", Color.rgb(185, 55, 45));
+
+        if (levelWon) {
+            panel(c, 330, 210, 950, 500, Color.argb(235, 20, 85, 35));
+            text(c, "VICTORY!", 500, 295, 56, true);
+            text(c, "+100 XU", 540, 345, 30, true);
+            if (level < LEVELS) button(c, 490, 390, 790, 465, "MÀN TIẾP", Color.rgb(55, 145, 75));
+            else text(c, "HOÀN THÀNH 15 MÀN!", 435, 410, 27, true);
+        }
+
+        if (levelLost) {
+            panel(c, 330, 210, 950, 500, Color.argb(235, 95, 30, 30));
+            text(c, "DEFEAT", 525, 295, 56, true);
+            button(c, 490, 390, 790, 465, "CHƠI LẠI", Color.rgb(175, 75, 55));
+        }
     }
-    void nextLevel(){level=Math.min(15,level+1);prefs.edit().putInt("level",level).apply();loadBuild();reset();buildMode=false;}
-    void retryLevel(){loadBuild();reset();buildMode=false;}
-    @Override public boolean onTouchEvent(MotionEvent e){float x=(e.getX()-ox)/scale,y=(e.getY()-oy)/scale;return buildMode?touchBuilder(e,x,y):touchBattle(e,x,y);}
-    void txt(Canvas c,String s,float x,float y,float size,boolean bold){p.setStyle(Paint.Style.FILL);p.setColor(Color.WHITE);p.setTextSize(size);p.setTypeface(Typeface.create(Typeface.DEFAULT,bold?Typeface.BOLD:Typeface.NORMAL));c.drawText(s,x,y,p);}
-    void button(Canvas c,float l,float t,float r,float b,String s,int color){p.setStyle(Paint.Style.FILL);p.setColor(color);c.drawRoundRect(l,t,r,b,18,18,p);p.setColor(Color.WHITE);p.setTextSize(22);p.setTypeface(Typeface.DEFAULT_BOLD);float w=p.measureText(s);c.drawText(s,(l+r-w)/2,t+(b-t)/2+8,p);}
-    static class Part{static final int BODY=0,HEAD=1,ARMOR=2,BIG=3,SMALL=4,HINGE=5,GUN=6;int type,weld=-1;float x,y,angle;Part(int t,float x,float y){type=t;this.x=x;this.y=y;}}
-    static class Shot{float x,y,vx,vy,life=5;int damage;boolean enemy,dead;Shot(float x,float y,float a,float speed,int d,boolean e){this.x=x;this.y=y;vx=(float)Math.cos(a)*speed;vy=(float)Math.sin(a)*speed;damage=d;enemy=e;}void draw(Canvas c){if(dead)return;Paint q=new Paint(Paint.ANTI_ALIAS_FLAG);q.setColor(Color.argb(130,255,180,50));c.drawCircle(x,y,16,q);q.setColor(Color.rgb(250,235,100));c.drawCircle(x,y,9,q);}}
-    class Enemy{float x,speed,aiAim;int hp,maxHp,armor,damage,fireMs;boolean boss;String name="";int aiMode=1,strafe=1,burst=0;boolean hit(float px,float py){float gy=terrainY(x)-35;return px>x-130&&px<x+130&&py>gy-115&&py<gy+60;}String aiLabel(){if(aiMode==0)return "TIẾN CÔNG";if(aiMode==2)return "LÙI / NÉ";return "GIỮ KHOẢNG CÁCH";}}
+
+    private void drawPlayer(Canvas c) {
+        Bitmap body = bodyBitmap();
+        Bitmap head = headBitmap();
+        if (body == null || head == null) return;
+
+        float ground = terrainY(worldX);
+        float bodyWidth = 330f;
+        float bodyHeight = 220f;
+        float bodyTop = ground - 165f;
+        float bodyCenterX = worldX;
+        float bodyCenterY = bodyTop + bodyHeight * 0.55f;
+        float slope = (float) Math.toDegrees(Math.atan(terrainSlope(worldX)));
+
+        c.save();
+        c.rotate(slope, bodyCenterX, ground);
+        RectF bodyDst = new RectF(bodyCenterX - bodyWidth * 0.5f, bodyTop, bodyCenterX + bodyWidth * 0.5f, bodyTop + bodyHeight);
+        c.drawBitmap(body, null, bodyDst, imagePaint);
+        c.restore();
+
+        float pivotX = bodyCenterX + 25f;
+        float pivotY = bodyTop + 62f;
+        float headWidth = selectedTank == TankType.MS1 ? 235f : 260f;
+        float headHeight = selectedTank == TankType.MS1 ? 175f : 190f;
+
+        c.save();
+        c.rotate(slope - headAngle, pivotX, pivotY);
+        RectF headDst = new RectF(pivotX - headWidth * 0.48f, pivotY - 35f, pivotX + headWidth * 0.52f, pivotY - 35f + headHeight);
+        c.drawBitmap(head, null, headDst, imagePaint);
+        c.restore();
+    }
+
+    private void drawEnemy(Canvas c) {
+        float y = terrainY(enemyX);
+        float x = enemyX;
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb(55, 0, 0, 0));
+        c.drawOval(x - 150, y - 5, x + 150, y + 35, paint);
+        paint.setColor(Color.rgb(70, 73, 77));
+        c.drawRoundRect(x - 145, y - 70, x + 145, y - 5, 25, 25, paint);
+        paint.setColor(Color.rgb(115, 120, 126));
+        for (int i = 0; i < 7; i++) c.drawCircle(x - 110 + i * 36, y - 18, 14, paint);
+        paint.setColor(level % 5 == 0 ? Color.rgb(150, 70, 70) : Color.rgb(125, 86, 65));
+        c.drawRoundRect(x - 75, y - 135, x + 70, y - 65, 20, 20, paint);
+        paint.setColor(Color.rgb(45, 48, 52));
+        paint.setStrokeWidth(18);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        c.drawLine(x + 15, y - 102, x + 150, y - 102, paint);
+
+        paint.setColor(Color.argb(150, 0, 0, 0));
+        c.drawRoundRect(x - 135, y - 165, x + 135, y - 149, 8, 8, paint);
+        paint.setColor(Color.rgb(75, 220, 90));
+        float hpWidth = 270f * enemyHp / Math.max(1f, enemyMaxHp);
+        c.drawRect(x - 135, y - 165, x - 135 + hpWidth, y - 149, paint);
+    }
+
+    private void drawTerrain(Canvas c, float camera) {
+        float left = camera - 120f;
+        float right = camera + VW + 120f;
+        Path ground = new Path();
+        ground.moveTo(left, terrainY(left));
+        for (float x = left; x <= right; x += 20f) ground.lineTo(x, terrainY(x));
+        ground.lineTo(right, VH);
+        ground.lineTo(left, VH);
+        ground.close();
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.rgb(101, 178, 82));
+        c.drawPath(ground, paint);
+
+        Path top = new Path();
+        top.moveTo(left, terrainY(left) - 18f);
+        for (float x = left; x <= right; x += 20f) top.lineTo(x, terrainY(x) - 18f);
+        top.lineTo(right, terrainY(right) - 18f);
+        top.lineTo(left, terrainY(left) - 18f);
+        top.close();
+        paint.setColor(Color.rgb(177, 220, 111));
+        c.drawPath(top, paint);
+    }
+
+    private void drawFinish(Canvas c) {
+        float x = levelLength() - 180f;
+        float y = terrainY(x);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.DKGRAY);
+        c.drawRect(x, y - 180f, x + 9f, y, paint);
+        paint.setColor(Color.RED);
+        Path flag = new Path();
+        flag.moveTo(x + 9f, y - 180f);
+        flag.lineTo(x + 120f, y - 150f);
+        flag.lineTo(x + 9f, y - 120f);
+        flag.close();
+        c.drawPath(flag, paint);
+        text(c, "FINISH", x - 15, y - 195, 19, true);
+    }
+
+    private void updateBattle(float dt, long now) {
+        float speed = selectedTank == TankType.MS1 ? 145f : 118f;
+        if (leftPressed) worldX -= speed * dt;
+        if (rightPressed) worldX += speed * dt;
+        worldX = Math.max(160f, Math.min(levelLength() - 320f, worldX));
+
+        if (upPressed) headAngle = Math.min(38f, headAngle + 48f * dt);
+        if (downPressed) headAngle = Math.max(-4f, headAngle - 48f * dt);
+
+        enemyX -= 8f * dt;
+        enemyX = Math.max(worldX + 480f, enemyX);
+
+        if (now >= enemyNextShot && enemyHp > 0 && playerHp > 0) {
+            fireEnemyShot();
+            enemyNextShot = now + Math.max(900L, 1900L - level * 45L);
+        }
+
+        for (Projectile projectile : projectiles) {
+            if (projectile.dead) continue;
+            projectile.vy += 760f * dt;
+            projectile.x += projectile.vx * dt;
+            projectile.y += projectile.vy * dt;
+            projectile.life -= dt;
+
+            if (projectile.y >= terrainY(projectile.x)) {
+                projectile.dead = true;
+                continue;
+            }
+            if (projectile.life <= 0f) {
+                projectile.dead = true;
+                continue;
+            }
+
+            if (projectile.enemy) {
+                if (Math.abs(projectile.x - worldX) < 165f && projectile.y > terrainY(worldX) - 165f && projectile.y < terrainY(worldX) + 20f) {
+                    projectile.dead = true;
+                    playerHp = Math.max(0, playerHp - projectile.damage);
+                }
+            } else if (enemyHp > 0) {
+                float targetY = terrainY(enemyX) - 90f;
+                if (Math.abs(projectile.x - enemyX) < 155f && Math.abs(projectile.y - targetY) < 120f) {
+                    projectile.dead = true;
+                    enemyHp = Math.max(0, enemyHp - projectile.damage);
+                }
+            }
+        }
+
+        Iterator<Projectile> iterator = projectiles.iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().dead) iterator.remove();
+        }
+
+        if (enemyHp <= 0 && !levelWon) {
+            levelWon = true;
+            coins += 100;
+            saveProgress();
+        }
+        if (playerHp <= 0) levelLost = true;
+    }
+
+    private void fireEnemyShot() {
+        float startX = enemyX - 40f;
+        float startY = terrainY(enemyX) - 110f;
+        float dx = worldX - startX;
+        float dy = (terrainY(worldX) - 100f) - startY;
+        float t = Math.max(0.45f, Math.abs(dx) / 600f);
+        float angle = (float) Math.atan2((dy - 380f * t * t) / t, dx);
+        projectiles.add(new Projectile(startX, startY, angle, 600f, 28, true));
+    }
+
+    private void firePlayer() {
+        long now = System.currentTimeMillis();
+        if (now - lastPlayerShot < PLAYER_FIRE_COOLDOWN || levelWon || levelLost || enemyHp <= 0) return;
+
+        float slope = (float) Math.atan(terrainSlope(worldX));
+        float angle = slope - (float) Math.toRadians(headAngle);
+        float pivotX = worldX + 25f;
+        float pivotY = terrainY(worldX) - 105f;
+        float muzzleX = pivotX + 150f * (float) Math.cos(angle);
+        float muzzleY = pivotY + 150f * (float) Math.sin(angle);
+
+        projectiles.add(new Projectile(muzzleX, muzzleY, angle, 700f, selectedTank == TankType.MS1 ? 34 : 50, false));
+        lastPlayerShot = now;
+    }
+
+    private float terrainY(float x) {
+        float phase = level * 0.63f;
+        return 465f
+                + 52f * (float) Math.sin(x / 265f + phase)
+                + 25f * (float) Math.sin(x / 110f + level)
+                + 15f * (float) Math.sin(x / 56f + 2f);
+    }
+
+    private float terrainSlope(float x) {
+        return (terrainY(x + 2f) - terrainY(x - 2f)) / 4f;
+    }
+
+    private float levelLength() {
+        return 4400f + level * 250f;
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        float x = (event.getX() - offsetX) / scale;
+        float y = (event.getY() - offsetY) / scale;
+
+        if (buildMode) return handleBuildTouch(event, x, y);
+        return handleBattleTouch(event, x, y);
+    }
+
+    private boolean handleBuildTouch(MotionEvent event, float x, float y) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            if (x >= 900 && x <= 1065 && y >= 590) {
+                buildMode = false;
+                resetBattle();
+                return true;
+            }
+            if (x >= 1080 && y >= 590) {
+                selectedTank = TankType.MS1;
+                resetTankParts();
+                return true;
+            }
+            if (x >= 915 && x <= 1215 && y >= 165 && y <= 245) {
+                selectedTank = TankType.MS1;
+                resetTankParts();
+                return true;
+            }
+            if (x >= 915 && x <= 1215 && y >= 265 && y <= 345) {
+                if (!kv2Owned) {
+                    if (coins >= KV2_PRICE) {
+                        coins -= KV2_PRICE;
+                        kv2Owned = true;
+                        saveProgress();
+                    } else {
+                        return true;
+                    }
+                }
+                selectedTank = TankType.KV2;
+                resetTankParts();
+                return true;
+            }
+            if (x >= 1065 && x <= 1215 && y >= 520 && y <= 570 && selectedTank == TankType.KV2 && !kv2Owned) {
+                if (coins >= KV2_PRICE) {
+                    coins -= KV2_PRICE;
+                    kv2Owned = true;
+                    saveProgress();
+                }
+                return true;
+            }
+
+            if (headPart.welded && Math.hypot(x - headPart.x, y - headPart.y) < 100f) {
+                dragPart = 1;
+                dragDx = headPart.x - x;
+                dragDy = headPart.y - y;
+                return true;
+            }
+        }
+
+        if (action == MotionEvent.ACTION_MOVE && dragPart == 1) {
+            headPart.x = x + dragDx;
+            headPart.y = y + dragDy;
+            headPart.welded = false;
+            invalidate();
+            return true;
+        }
+
+        if (action == MotionEvent.ACTION_UP && dragPart == 1) {
+            dragPart = -1;
+            if (Math.hypot(headPart.x - 600f, headPart.y - 345f) < 125f) {
+                headPart.x = 600f;
+                headPart.y = 345f;
+                headPart.welded = true;
+            }
+            invalidate();
+            return true;
+        }
+        return true;
+    }
+
+    private boolean handleBattleTouch(MotionEvent event, float x, float y) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) {
+            leftPressed = x < 120f && y > 570f;
+            rightPressed = x >= 120f && x < 225f && y > 570f;
+            upPressed = x >= 225f && x < 325f && y > 570f;
+            downPressed = x >= 325f && x < 425f && y > 570f;
+
+            if (action == MotionEvent.ACTION_DOWN && x > 1075f && y > 570f) {
+                firePlayer();
+                return true;
+            }
+            if (action == MotionEvent.ACTION_DOWN && x > 870f && x < 1065f && y > 570f) {
+                buildMode = true;
+                return true;
+            }
+            if (action == MotionEvent.ACTION_DOWN && levelWon && level < LEVELS && x > 480f && x < 800f && y > 380f && y < 480f) {
+                level++;
+                saveProgress();
+                resetBattle();
+                return true;
+            }
+            if (action == MotionEvent.ACTION_DOWN && levelLost && x > 480f && x < 800f && y > 380f && y < 480f) {
+                resetBattle();
+                return true;
+            }
+            return true;
+        }
+
+        leftPressed = false;
+        rightPressed = false;
+        upPressed = false;
+        downPressed = false;
+        return true;
+    }
+
+    private RectF fitRect(Bitmap bitmap, float left, float top, float right, float bottom) {
+        float boxW = right - left;
+        float boxH = bottom - top;
+        float ratio = Math.min(boxW / Math.max(1, bitmap.getWidth()), boxH / Math.max(1, bitmap.getHeight()));
+        float w = bitmap.getWidth() * ratio;
+        float h = bitmap.getHeight() * ratio;
+        float x = (left + right - w) * 0.5f;
+        float y = (top + bottom - h) * 0.5f;
+        return new RectF(x, y, x + w, y + h);
+    }
+
+    private void drawBackground(Canvas c) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.rgb(67, 151, 196));
+        c.drawRect(0, 0, VW, VH, paint);
+        paint.setColor(Color.argb(60, 255, 255, 255));
+        c.drawCircle(170, 105, 38, paint);
+        c.drawCircle(218, 92, 50, paint);
+        c.drawCircle(270, 108, 34, paint);
+        c.drawCircle(865, 120, 38, paint);
+        c.drawCircle(915, 108, 52, paint);
+        c.drawCircle(970, 125, 33, paint);
+    }
+
+    private void panel(Canvas c, float l, float t, float r, float b, int color) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(color);
+        c.drawRoundRect(l, t, r, b, 22, 22, paint);
+    }
+
+    private void button(Canvas c, float l, float t, float r, float b, String label, int color) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(color);
+        c.drawRoundRect(l, t, r, b, 18, 18, paint);
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(21);
+        paint.setTypeface(Typeface.DEFAULT_BOLD);
+        float width = paint.measureText(label);
+        c.drawText(label, (l + r - width) * 0.5f, t + (b - t) * 0.5f + 8f, paint);
+    }
+
+    private void text(Canvas c, String value, float x, float y, float size, boolean bold) {
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(size);
+        paint.setTypeface(Typeface.create(Typeface.DEFAULT, bold ? Typeface.BOLD : Typeface.NORMAL));
+        c.drawText(value, x, y, paint);
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private enum TankType {
+        MS1,
+        KV2
+    }
+
+    private static class TankPart {
+        static final int BODY = 0;
+        static final int HEAD = 1;
+        final int type;
+        float x;
+        float y;
+        boolean welded;
+
+        TankPart(int type, float x, float y) {
+            this.type = type;
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    private static class Projectile {
+        float x;
+        float y;
+        float vx;
+        float vy;
+        float life = 5f;
+        final int damage;
+        final boolean enemy;
+        boolean dead;
+
+        Projectile(float x, float y, float angle, float speed, int damage, boolean enemy) {
+            this.x = x;
+            this.y = y;
+            this.vx = (float) Math.cos(angle) * speed;
+            this.vy = (float) Math.sin(angle) * speed;
+            this.damage = damage;
+            this.enemy = enemy;
+        }
+
+        void draw(Canvas c) {
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setColor(Color.argb(150, 255, 185, 60));
+            c.drawCircle(x, y, 15, p);
+            p.setColor(Color.rgb(255, 235, 100));
+            c.drawCircle(x, y, 8, p);
+        }
+    }
 }
