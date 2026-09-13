@@ -34,7 +34,7 @@ public class TankGameView extends View {
         super(c); setLayerType(View.LAYER_TYPE_SOFTWARE,null);
         prefs=c.getSharedPreferences("tank_adventures_clean",Context.MODE_PRIVATE);
         level=clamp(prefs.getInt("level",1),1,LEVELS);
-        coins=Math.max(0,prefs.getInt("coins",0));
+        coins=Math.max(0,prefs.getInt("coins",500));
         kv2Owned=prefs.getBoolean("kv2_owned",false);
         loadImages(); setDefaultHeadAngle(); resetBattle(); lastFrame=System.currentTimeMillis();
     }
@@ -42,6 +42,12 @@ public class TankGameView extends View {
     private Bitmap load(String n){int id=getResources().getIdentifier(n,"drawable",getContext().getPackageName());return id==0?null:BitmapFactory.decodeResource(getResources(),id);}
     private Bitmap body(){return selected==TankType.MS1?ms1Body:kv2Body;}
     private Bitmap head(){return selected==TankType.MS1?ms1Head:kv2Head;}
+    private float bodyWidth(){return selected==TankType.MS1?335f:390f;}
+    private float headWidth(){return selected==TankType.MS1?190f:215f;}
+    private float bodyPivotX(){return selected==TankType.MS1?.67f:.66f;}
+    private float bodyPivotY(){return selected==TankType.MS1?.22f:.21f;}
+    private float headAnchorX(){return selected==TankType.MS1?.48f:.46f;}
+    private float headAnchorY(){return selected==TankType.MS1?.76f:.74f;}
     private void setDefaultHeadAngle(){headAngle=selected==TankType.MS1?10f:12f;}
     private void resetBattle(){shots.clear();tankX=450f;enemyX=2600f+level*120f;hp=selected==TankType.MS1?380:620;enemyMax=260+level*55;enemyHp=enemyMax;won=false;lost=false;lastShot=0;enemyShotAt=System.currentTimeMillis()+1300;}
     private void save(){prefs.edit().putInt("level",level).putInt("coins",coins).putBoolean("kv2_owned",kv2Owned).apply();}
@@ -66,11 +72,10 @@ public class TankGameView extends View {
 
     private void drawAssembly(Canvas c){
         Bitmap b=body(),h=head();if(b==null||h==null)return;
-        float bw=400f,bh=bw*b.getHeight()/(float)b.getWidth(),bx=250f,ground=505f,by=ground-bh;
+        float bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),bx=250f,ground=505f,by=ground-bh;
         c.drawBitmap(b,null,new RectF(bx,by,bx+bw,ground),img);
-        float pivotX=bx+bw*.66f,pivotY=by+bh*.20f;
-        float hw=selected==TankType.MS1?275f:245f,hh=hw*h.getHeight()/(float)h.getWidth();
-        c.save();c.rotate(-headAngle,pivotX,pivotY);c.drawBitmap(h,null,new RectF(pivotX-hw*.50f,pivotY,pivotX+hw*.50f,pivotY+hh),img);c.restore();
+        float pivotX=bx+bw*bodyPivotX(),pivotY=by+bh*bodyPivotY();
+        drawHeadAtPivot(c,h,pivotX,pivotY);
     }
 
     private void choice(Canvas c,TankType t,float l,float top,float r,float bot){
@@ -91,12 +96,19 @@ public class TankGameView extends View {
 
     private void drawPlayer(Canvas c){
         Bitmap b=body(),h=head();if(b==null||h==null)return;
-        float ground=terrainY(tankX),bw=390f,bh=bw*b.getHeight()/(float)b.getWidth(),leftX=tankX-bw*.5f,top=ground-bh;
+        float ground=terrainY(tankX),bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),leftX=tankX-bw*.5f,top=ground-bh;
         float slope=(float)Math.toDegrees(Math.atan(terrainSlope(tankX)));
         c.save();c.rotate(slope,tankX,ground);c.drawBitmap(b,null,new RectF(leftX,top,leftX+bw,ground),img);c.restore();
-        float pivotX=leftX+bw*.66f,pivotY=top+bh*.20f,hw=selected==TankType.MS1?285f:250f,hh=hw*h.getHeight()/(float)h.getWidth();
-        c.save();c.rotate(-headAngle,pivotX,pivotY);c.drawBitmap(h,null,new RectF(pivotX-hw*.50f,pivotY,pivotX+hw*.50f,pivotY+hh),img);c.restore();
+        float pivotX=leftX+bw*bodyPivotX(),pivotY=top+bh*bodyPivotY();
+        drawHeadAtPivot(c,h,pivotX,pivotY);
     }
+
+    private void drawHeadAtPivot(Canvas c,Bitmap h,float pivotX,float pivotY){
+        float hw=headWidth(),hh=hw*h.getHeight()/(float)h.getWidth();
+        float ax=hw*headAnchorX(),ay=hh*headAnchorY();
+        c.save();c.rotate(-headAngle,pivotX,pivotY);c.drawBitmap(h,null,new RectF(pivotX-ax,pivotY-ay,pivotX-ax+hw,pivotY-ay+hh),img);c.restore();
+    }
+
     private void drawEnemy(Canvas c){float y=terrainY(enemyX);p.setStyle(Paint.Style.FILL);p.setColor(Color.rgb(145,55,55));c.drawRect(enemyX-100,y-110,enemyX+100,y-25,p);p.setColor(Color.rgb(190,75,75));c.drawCircle(enemyX,y-130,65,p);p.setColor(Color.DKGRAY);c.drawRect(enemyX+30,y-145,enemyX+135,y-125,p);bar(c,enemyX-100,y-185,enemyX+100,y-170,enemyHp/(float)Math.max(1,enemyMax));}
 
     private void update(float dt,long now){
@@ -107,9 +119,10 @@ public class TankGameView extends View {
         Iterator<Shot> it=shots.iterator();while(it.hasNext()){Shot s=it.next();s.update(dt);if(s.hit(this)){if(s.player)enemyHp-=s.damage;else hp-=s.damage;it.remove();}else if(s.off())it.remove();}
         if(enemyHp<=0&&!won){won=true;coins+=100;save();}if(hp<=0)lost=true;
     }
-    private void fire(){long now=System.currentTimeMillis();if(now-lastShot<FIRE_DELAY||won||lost)return;lastShot=now;Bitmap b=body();float bw=390,bh=bw*b.getHeight()/(float)b.getWidth(),ground=terrainY(tankX),top=ground-bh,pivotX=tankX-bw*.5f+bw*.66f,pivotY=top+bh*.20f,a=(float)Math.toRadians(-headAngle),m=selected==TankType.MS1?250:225,sx=pivotX+(float)Math.cos(a)*m,sy=pivotY+(float)Math.sin(a)*m;shots.add(new Shot(sx,sy,sx+2200,sy+(float)Math.sin(a)*300,true,35));}
+
+    private void fire(){long now=System.currentTimeMillis();if(now-lastShot<FIRE_DELAY||won||lost)return;lastShot=now;Bitmap b=body();float bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),ground=terrainY(tankX),top=ground-bh,pivotX=tankX-bw*.5f+bw*bodyPivotX(),pivotY=top+bh*bodyPivotY(),a=(float)Math.toRadians(-headAngle),m=headWidth()*.88f,sx=pivotX+(float)Math.cos(a)*m,sy=pivotY+(float)Math.sin(a)*m;shots.add(new Shot(sx,sy,sx+2200,sy+(float)Math.sin(a)*300,true,35));}
     private void nextLevel(){if(level>=LEVELS)return;level++;save();buildMode=true;setDefaultHeadAngle();resetBattle();}
-    private void resetAll(){level=1;coins=0;kv2Owned=false;selected=TankType.MS1;setDefaultHeadAngle();save();resetBattle();}
+    private void resetAll(){level=1;coins=500;kv2Owned=false;selected=TankType.MS1;setDefaultHeadAngle();save();resetBattle();}
 
     private void drawTerrain(Canvas c){Path q=new Path();q.moveTo(0,terrainY(0)+100);for(int x=0;x<=levelLength();x+=20)q.lineTo(x,terrainY(x));q.lineTo(levelLength(),720);q.lineTo(0,720);q.close();p.setStyle(Paint.Style.FILL);p.setColor(Color.rgb(75,115,65));c.drawPath(q,p);p.setColor(Color.rgb(105,145,75));for(int x=0;x<levelLength();x+=180)c.drawRect(x,terrainY(x),x+120,terrainY(x)+6,p);}
     private void drawFinish(Canvas c){float x=levelLength()-140,y=terrainY(x);p.setColor(Color.WHITE);p.setStrokeWidth(8);c.drawLine(x,y-210,x,y,p);p.setStyle(Paint.Style.FILL);p.setColor(Color.YELLOW);c.drawRect(x,y-210,x+110,y-150,p);}
