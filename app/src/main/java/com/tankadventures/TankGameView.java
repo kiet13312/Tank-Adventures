@@ -30,14 +30,7 @@ public class TankGameView extends View {
     private float tankX=450f,enemyX,headAngle;
     private long lastFrame,lastShot,enemyShotAt;
 
-    public TankGameView(Context c){
-        super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);
-        prefs=c.getSharedPreferences("tank_adventures_clean",Context.MODE_PRIVATE);
-        level=clamp(prefs.getInt("level",1),1,LEVELS);
-        coins=Math.max(0,prefs.getInt("coins",500));
-        kv2Owned=prefs.getBoolean("kv2_owned",false);
-        loadImages();setDefaultHeadAngle();resetBattle();lastFrame=System.currentTimeMillis();
-    }
+    public TankGameView(Context c){super(c);setLayerType(View.LAYER_TYPE_SOFTWARE,null);prefs=c.getSharedPreferences("tank_adventures_clean",Context.MODE_PRIVATE);level=clamp(prefs.getInt("level",1),1,LEVELS);coins=Math.max(0,prefs.getInt("coins",500));kv2Owned=prefs.getBoolean("kv2_owned",false);loadImages();setDefaultHeadAngle();resetBattle();lastFrame=System.currentTimeMillis();}
     private void loadImages(){ms1Body=load("ms1body");ms1Head=load("ms1head");kv2Body=load("kv2body");kv2Head=load("kv2head");}
     private Bitmap load(String n){int id=getResources().getIdentifier(n,"drawable",getContext().getPackageName());return id==0?null:BitmapFactory.decodeResource(getResources(),id);}
     private Bitmap body(){return selected==TankType.MS1?ms1Body:kv2Body;}
@@ -45,88 +38,32 @@ public class TankGameView extends View {
     private float bodyWidth(){return selected==TankType.MS1?335f:390f;}
     private float headWidth(){return selected==TankType.MS1?190f:215f;}
 
-    // Rotation pivot = yellow point shown by the user.
-    // MS-1 yellow point is near the lower-middle of the body.
-    // KV-2 yellow point is near the lower-middle/right of the body.
+    // Pivot is the yellow point marked on each body image.
     private float bodyPivotX(){return selected==TankType.MS1?.46f:.36f;}
     private float bodyPivotY(){return selected==TankType.MS1?.82f:.92f;}
-    private float headAnchorX(){return selected==TankType.MS1?.50f:.50f;}
+    private float headAnchorX(){return .50f;}
     private float headAnchorY(){return selected==TankType.MS1?.88f:.90f;}
     private void setDefaultHeadAngle(){headAngle=selected==TankType.MS1?10f:12f;}
     private void resetBattle(){shots.clear();tankX=450f;enemyX=2600f+level*120f;hp=selected==TankType.MS1?380:620;enemyMax=260+level*55;enemyHp=enemyMax;won=false;lost=false;lastShot=0;enemyShotAt=System.currentTimeMillis()+1300;}
     private void save(){prefs.edit().putInt("level",level).putInt("coins",coins).putBoolean("kv2_owned",kv2Owned).apply();}
 
-    @Override protected void onDraw(Canvas c){
-        long now=System.currentTimeMillis();float dt=Math.min(.033f,Math.max(0,(now-lastFrame)/1000f));lastFrame=now;
-        float s=Math.min(getWidth()/(float)VW,getHeight()/(float)VH),ox=(getWidth()-VW*s)/2f,oy=(getHeight()-VH*s)/2f;
-        c.save();c.translate(ox,oy);c.scale(s,s);
-        if(buildMode)drawBuild(c);else{if(!won&&!lost)update(dt,now);drawBattle(c);}c.restore();postInvalidateDelayed(16);
-    }
+    @Override protected void onDraw(Canvas c){long now=System.currentTimeMillis();float dt=Math.min(.033f,Math.max(0,(now-lastFrame)/1000f));lastFrame=now;float s=Math.min(getWidth()/(float)VW,getHeight()/(float)VH),ox=(getWidth()-VW*s)/2f,oy=(getHeight()-VH*s)/2f;c.save();c.translate(ox,oy);c.scale(s,s);if(buildMode)drawBuild(c);else{if(!won&&!lost)update(dt,now);drawBattle(c);}c.restore();postInvalidateDelayed(16);}
 
-    private void drawBuild(Canvas c){
-        background(c);text(c,"TANK ADVENTURES",35,42,34,true);text(c,"LẮP RÁP XE",35,76,22,false);text(c,"MÀN "+level+" / "+LEVELS+"    XU: "+coins,880,42,21,true);
-        panel(c,35,105,840,575,Color.argb(145,20,28,34));text(c,"THÂN + ĐẦU XE",65,143,24,true);text(c,"Trục quay nằm đúng tại điểm màu vàng.",65,174,17,false);drawAssembly(c);
-        panel(c,890,100,1250,570,Color.argb(230,30,35,40));text(c,"CHỌN XE",925,140,24,true);
-        choice(c,TankType.MS1,915,165,1215,245);choice(c,TankType.KV2,915,265,1215,345);
-        text(c,"Bộ phận của xe đã chọn",925,390,19,true);partCard(c,"THÂN XE",body(),915,410,1045,500);partCard(c,"ĐẦU XE",head(),1070,410,1200,500);
-        if(selected==TankType.KV2&&!kv2Owned)button(c,925,520,1215,565,"MUA KV-2 • 500 XU",Color.rgb(180,125,45));else button(c,925,520,1215,565,"ĐÃ CHỌN",Color.rgb(60,145,85));
-        button(c,900,605,1065,685,"CHIẾN ĐẤU",Color.rgb(55,145,75));button(c,1080,605,1245,685,"ĐẶT LẠI",Color.rgb(165,75,55));
-        panel(c,35,590,840,695,Color.argb(215,25,25,25));text(c,"Đầu xe quay quanh đúng điểm màu vàng.",60,625,19,true);text(c,"Trong trận: ▲▼ chỉ nâng/hạ ĐẦU XE. THÂN XE không lên/xuống.",60,660,16,false);
-    }
+    private void drawBuild(Canvas c){background(c);text(c,"TANK ADVENTURES",35,42,34,true);text(c,"LẮP RÁP XE",35,76,22,false);text(c,"MÀN "+level+" / "+LEVELS+"    XU: "+coins,880,42,21,true);panel(c,35,105,840,575,Color.argb(145,20,28,34));text(c,"THÂN + ĐẦU XE",65,143,24,true);text(c,"Trục quay nằm đúng tại điểm màu vàng.",65,174,17,false);drawAssembly(c);panel(c,890,100,1250,570,Color.argb(230,30,35,40));text(c,"CHỌN XE",925,140,24,true);choice(c,TankType.MS1,915,165,1215,245);choice(c,TankType.KV2,915,265,1215,345);text(c,"Bộ phận của xe đã chọn",925,390,19,true);partCard(c,"THÂN XE",body(),915,410,1045,500);partCard(c,"ĐẦU XE",head(),1070,410,1200,500);if(selected==TankType.KV2&&!kv2Owned)button(c,925,520,1215,565,"MUA KV-2 • 500 XU",Color.rgb(180,125,45));else button(c,925,520,1215,565,"ĐÃ CHỌN",Color.rgb(60,145,85));button(c,900,605,1065,685,"CHIẾN ĐẤU",Color.rgb(55,145,75));button(c,1080,605,1245,685,"ĐẶT LẠI",Color.rgb(165,75,55));panel(c,35,590,840,695,Color.argb(215,25,25,25));text(c,"Đầu xe quay quanh đúng điểm màu vàng.",60,625,19,true);text(c,"Trong trận: ▲▼ chỉ nâng/hạ ĐẦU XE. THÂN XE không lên/xuống.",60,660,16,false);}
 
-    private void drawAssembly(Canvas c){
-        Bitmap b=body(),h=head();if(b==null||h==null)return;
-        float bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),bx=250f,ground=505f,by=ground-bh;
-        c.drawBitmap(b,null,new RectF(bx,by,bx+bw,ground),img);
-        float pivotX=bx+bw*bodyPivotX(),pivotY=by+bh*bodyPivotY();
-        drawHeadAtPivot(c,h,pivotX,pivotY);
-    }
-
-    private void choice(Canvas c,TankType t,float l,float top,float r,float bot){
-        boolean sel=selected==t,locked=t==TankType.KV2&&!kv2Owned;p.setStyle(Paint.Style.FILL);p.setColor(sel?Color.rgb(70,125,80):Color.rgb(55,63,68));c.drawRoundRect(l,top,r,bot,18,18,p);
-        text(c,t==TankType.MS1?"MS-1  •  MIỄN PHÍ":(locked?"KV-2  •  500 XU":"KV-2  •  ĐÃ MUA"),l+18,top+32,20,true);
-        Bitmap b=t==TankType.MS1?ms1Body:kv2Body,h=t==TankType.MS1?ms1Head:kv2Head;if(b!=null)drawFit(c,b,l+12,top+42,l+150,bot-8);if(h!=null)drawFit(c,h,l+150,top+42,l+288,bot-8);
-    }
+    private void drawAssembly(Canvas c){Bitmap b=body(),h=head();if(b==null||h==null)return;float bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),bx=250f,ground=505f,by=ground-bh;c.drawBitmap(b,null,new RectF(bx,by,bx+bw,ground),img);float pivotX=bx+bw*bodyPivotX(),pivotY=by+bh*bodyPivotY();drawHeadAtPivot(c,h,pivotX,pivotY);}
+    private void choice(Canvas c,TankType t,float l,float top,float r,float bot){boolean sel=selected==t,locked=t==TankType.KV2&&!kv2Owned;p.setStyle(Paint.Style.FILL);p.setColor(sel?Color.rgb(70,125,80):Color.rgb(55,63,68));c.drawRoundRect(l,top,r,bot,18,18,p);text(c,t==TankType.MS1?"MS-1  •  MIỄN PHÍ":(locked?"KV-2  •  500 XU":"KV-2  •  ĐÃ MUA"),l+18,top+32,20,true);Bitmap b=t==TankType.MS1?ms1Body:kv2Body,h=t==TankType.MS1?ms1Head:kv2Head;if(b!=null)drawFit(c,b,l+12,top+42,l+150,bot-8);if(h!=null)drawFit(c,h,l+150,top+42,l+288,bot-8);}
     private void partCard(Canvas c,String label,Bitmap b,float l,float t,float r,float bot){panel(c,l,t,r,bot,Color.rgb(52,60,66));text(c,label,l+8,t+18,13,true);if(b!=null)drawFit(c,b,l+8,t+25,r-8,bot-8);}
 
-    private void drawBattle(Canvas c){
-        background(c);float cam=Math.max(0,Math.min(levelLength()-VW,tankX-470));c.save();c.translate(-cam,0);drawTerrain(c);drawFinish(c);drawPlayer(c);drawEnemy(c);for(Shot s:shots)s.draw(c);c.restore();
-        text(c,"MÀN "+level+"/"+LEVELS,25,34,23,true);text(c,"HP "+Math.max(0,hp),25,63,21,true);text(c,"XU "+coins,25,91,19,false);text(c,selected==TankType.MS1?"MS-1":"KV-2",25,118,19,true);text(c,"ĐẦU XE "+(int)headAngle+"°",25,145,18,false);text(c,"ENEMY "+Math.max(0,enemyHp),1025,34,22,true);
-        long rem=Math.max(0,FIRE_DELAY-(System.currentTimeMillis()-lastShot));text(c,rem==0?"BẮN SẴN":"HỒI "+String.format(Locale.US,"%.1fs",rem/1000f),25,173,17,true);
-        button(c,20,585,115,685,"◀",Color.rgb(55,80,100));button(c,125,585,220,685,"▶",Color.rgb(55,80,100));button(c,230,585,325,685,"▲",Color.rgb(125,95,55));button(c,330,585,425,685,"▼",Color.rgb(125,95,55));button(c,875,585,1060,685,"LẮP RÁP",Color.rgb(60,130,75));button(c,1080,585,1250,685,"BẮN",Color.rgb(185,55,45));
-        if(won){panel(c,330,210,950,500,Color.argb(235,20,85,35));text(c,"VICTORY!",500,295,56,true);text(c,"+100 XU",540,345,30,true);if(level<LEVELS)button(c,490,390,790,465,"MÀN TIẾP",Color.rgb(55,145,75));}
-        if(lost){panel(c,330,210,950,500,Color.argb(235,95,30,30));text(c,"DEFEAT",525,295,56,true);button(c,490,390,790,465,"CHƠI LẠI",Color.rgb(175,75,55));}
-    }
+    private void drawBattle(Canvas c){background(c);float cam=Math.max(0,Math.min(levelLength()-VW,tankX-470));c.save();c.translate(-cam,0);drawTerrain(c);drawFinish(c);drawPlayer(c);drawEnemy(c);for(Shot s:shots)s.draw(c);c.restore();text(c,"MÀN "+level+"/"+LEVELS,25,34,23,true);text(c,"HP "+Math.max(0,hp),25,63,21,true);text(c,"XU "+coins,25,91,19,false);text(c,selected==TankType.MS1?"MS-1":"KV-2",25,118,19,true);text(c,"ĐẦU XE "+(int)headAngle+"°",25,145,18,false);text(c,"ENEMY "+Math.max(0,enemyHp),1025,34,22,true);long rem=Math.max(0,FIRE_DELAY-(System.currentTimeMillis()-lastShot));text(c,rem==0?"BẮN SẴN":"HỒI "+String.format(Locale.US,"%.1fs",rem/1000f),25,173,17,true);button(c,20,585,115,685,"◀",Color.rgb(55,80,100));button(c,125,585,220,685,"▶",Color.rgb(55,80,100));button(c,230,585,325,685,"▲",Color.rgb(125,95,55));button(c,330,585,425,685,"▼",Color.rgb(125,95,55));button(c,875,585,1060,685,"LẮP RÁP",Color.rgb(60,130,75));button(c,1080,585,1250,685,"BẮN",Color.rgb(185,55,45));if(won){panel(c,330,210,950,500,Color.argb(235,20,85,35));text(c,"VICTORY!",500,295,56,true);text(c,"+100 XU",540,345,30,true);if(level<LEVELS)button(c,490,390,790,465,"MÀN TIẾP",Color.rgb(55,145,75));}if(lost){panel(c,330,210,950,500,Color.argb(235,95,30,30));text(c,"DEFEAT",525,295,56,true);button(c,490,390,790,465,"CHƠI LẠI",Color.rgb(175,75,55));}}
 
-    private void drawPlayer(Canvas c){
-        Bitmap b=body(),h=head();if(b==null||h==null)return;
-        float ground=terrainY(tankX),bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),leftX=tankX-bw*.5f,top=ground-bh;
-        float slope=(float)Math.toDegrees(Math.atan(terrainSlope(tankX)));
-        c.save();c.rotate(slope,tankX,ground);c.drawBitmap(b,null,new RectF(leftX,top,leftX+bw,ground),img);c.restore();
-        float rawX=leftX+bw*bodyPivotX(),rawY=top+bh*bodyPivotY();
-        float dx=rawX-tankX,dy=rawY-ground,rad=(float)Math.toRadians(slope);
-        float pivotX=tankX+dx*(float)Math.cos(rad)-dy*(float)Math.sin(rad),pivotY=ground+dx*(float)Math.sin(rad)+dy*(float)Math.cos(rad);
-        drawHeadAtPivot(c,h,pivotX,pivotY);
-    }
-
-    private void drawHeadAtPivot(Canvas c,Bitmap h,float pivotX,float pivotY){
-        float hw=headWidth(),hh=hw*h.getHeight()/(float)h.getWidth(),ax=hw*headAnchorX(),ay=hh*headAnchorY();
-        c.save();c.rotate(-headAngle,pivotX,pivotY);c.drawBitmap(h,null,new RectF(pivotX-ax,pivotY-ay,pivotX-ax+hw,pivotY-ay+hh),img);c.restore();
-    }
-
+    private void drawPlayer(Canvas c){Bitmap b=body(),h=head();if(b==null||h==null)return;float ground=terrainY(tankX),bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),leftX=tankX-bw*.5f,top=ground-bh;float slope=(float)Math.toDegrees(Math.atan(terrainSlope(tankX)));c.save();c.rotate(slope,tankX,ground);c.drawBitmap(b,null,new RectF(leftX,top,leftX+bw,ground),img);c.restore();float rawX=leftX+bw*bodyPivotX(),rawY=top+bh*bodyPivotY(),dx=rawX-tankX,dy=rawY-ground,rad=(float)Math.toRadians(slope),pivotX=tankX+dx*(float)Math.cos(rad)-dy*(float)Math.sin(rad),pivotY=ground+dx*(float)Math.sin(rad)+dy*(float)Math.cos(rad);drawHeadAtPivot(c,h,pivotX,pivotY);}
+    private void drawHeadAtPivot(Canvas c,Bitmap h,float pivotX,float pivotY){float hw=headWidth(),hh=hw*h.getHeight()/(float)h.getWidth(),ax=hw*headAnchorX(),ay=hh*headAnchorY();c.save();c.rotate(-headAngle,pivotX,pivotY);c.drawBitmap(h,null,new RectF(pivotX-ax,pivotY-ay,pivotX-ax+hw,pivotY-ay+hh),img);c.restore();}
     private void drawEnemy(Canvas c){float y=terrainY(enemyX);p.setStyle(Paint.Style.FILL);p.setColor(Color.rgb(145,55,55));c.drawRect(enemyX-100,y-110,enemyX+100,y-25,p);p.setColor(Color.rgb(190,75,75));c.drawCircle(enemyX,y-130,65,p);p.setColor(Color.DKGRAY);c.drawRect(enemyX+30,y-145,enemyX+135,y-125,p);bar(c,enemyX-100,y-185,enemyX+100,y-170,enemyHp/(float)Math.max(1,enemyMax));}
 
-    private void update(float dt,long now){
-        if(left)tankX-=260*dt;if(right)tankX+=260*dt;tankX=Math.max(170,Math.min(levelLength()-170,tankX));
-        if(up)headAngle=Math.max(-35,headAngle-75*dt);if(down)headAngle=Math.min(55,headAngle+75*dt);
-        if(enemyX>tankX+280)enemyX-=Math.min(45*dt,enemyX-(tankX+280));else if(enemyX<tankX+280)enemyX+=Math.min(25*dt,tankX+280-enemyX);
-        if(now>=enemyShotAt){enemyShotAt=now+2600;shots.add(new Shot(enemyX-80,terrainY(enemyX)-125,tankX,terrainY(tankX)-100,false,18));}
-        Iterator<Shot> it=shots.iterator();while(it.hasNext()){Shot s=it.next();s.update(dt);if(s.hit(this)){if(s.player)enemyHp-=s.damage;else hp-=s.damage;it.remove();}else if(s.off())it.remove();}
-        if(enemyHp<=0&&!won){won=true;coins+=100;save();}if(hp<=0)lost=true;
-    }
+    private void update(float dt,long now){if(left)tankX-=260*dt;if(right)tankX+=260*dt;tankX=Math.max(170,Math.min(levelLength()-170,tankX));if(up)headAngle=Math.max(-35,headAngle-75*dt);if(down)headAngle=Math.min(55,headAngle+75*dt);if(enemyX>tankX+280)enemyX-=Math.min(45*dt,enemyX-(tankX+280));else if(enemyX<tankX+280)enemyX+=Math.min(25*dt,tankX+280-enemyX);if(now>=enemyShotAt){enemyShotAt=now+2600;shots.add(new Shot(enemyX-80,terrainY(enemyX)-125,tankX,terrainY(tankX)-100,false,18));}Iterator<Shot> it=shots.iterator();while(it.hasNext()){Shot s=it.next();s.update(dt);if(s.hit(this)){if(s.player)enemyHp-=s.damage;else hp-=s.damage;it.remove();}else if(s.off())it.remove();}if(enemyHp<=0&&!won){won=true;coins+=100;save();}if(hp<=0)lost=true;}
 
-    private void fire(){long now=System.currentTimeMillis();if(now-lastShot<FIRE_DELAY||won||lost)return;lastShot=now;Bitmap b=body();float bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),ground=terrainY(tankX),top=ground-bh,slope=(float)Math.toDegrees(Math.atan(terrainSlope(tankX)),rad=(float)Math.toRadians(slope),rawX=tankX-bw*.5f+bw*bodyPivotX(),rawY=top+bh*bodyPivotY(),dx=rawX-tankX,dy=rawY-ground,pivotX=tankX+dx*(float)Math.cos(rad)-dy*(float)Math.sin(rad),pivotY=ground+dx*(float)Math.sin(rad)+dy*(float)Math.cos(rad),a=(float)Math.toRadians(-headAngle),m=headWidth()*.88f,sx=pivotX+(float)Math.cos(a)*m,sy=pivotY+(float)Math.sin(a)*m;shots.add(new Shot(sx,sy,sx+2200,sy+(float)Math.sin(a)*300,true,35));}
-
+    private void fire(){long now=System.currentTimeMillis();if(now-lastShot<FIRE_DELAY||won||lost)return;lastShot=now;Bitmap b=body();float bw=bodyWidth(),bh=bw*b.getHeight()/(float)b.getWidth(),ground=terrainY(tankX),top=ground-bh,slope=(float)Math.toDegrees(Math.atan(terrainSlope(tankX))),rad=(float)Math.toRadians(slope),rawX=tankX-bw*.5f+bw*bodyPivotX(),rawY=top+bh*bodyPivotY(),dx=rawX-tankX,dy=rawY-ground,pivotX=tankX+dx*(float)Math.cos(rad)-dy*(float)Math.sin(rad),pivotY=ground+dx*(float)Math.sin(rad)+dy*(float)Math.cos(rad),a=(float)Math.toRadians(-headAngle),m=headWidth()*.88f,sx=pivotX+(float)Math.cos(a)*m,sy=pivotY+(float)Math.sin(a)*m;shots.add(new Shot(sx,sy,sx+2200,sy+(float)Math.sin(a)*300,true,35));}
     private void nextLevel(){if(level>=LEVELS)return;level++;save();buildMode=true;setDefaultHeadAngle();resetBattle();}
     private void resetAll(){level=1;coins=500;kv2Owned=false;selected=TankType.MS1;setDefaultHeadAngle();save();resetBattle();}
 
@@ -135,7 +72,6 @@ public class TankGameView extends View {
     private float terrainY(float x){float a=40*(float)Math.sin(x*.0031)+25*(float)Math.sin(x*.0077),r=0;if(x>650&&x<1150)r=(x-650)*.18f;else if(x>=1150&&x<1500)r=90-(x-1150)*.257f;return 530-a-r;}
     private float terrainSlope(float x){float e=2;return(terrainY(x+e)-terrainY(x-e))/(2*e);}
     private float levelLength(){return 3000+level*180;}
-
     private void drawFit(Canvas c,Bitmap b,float l,float t,float r,float bot){float bw=b.getWidth(),bh=b.getHeight(),s=Math.min((r-l)/bw,(bot-t)/bh),w=bw*s,h=bh*s;c.drawBitmap(b,null,new RectF(l+(r-l-w)/2f,t+(bot-t-h)/2f,l+(r-l+w)/2f,t+(bot-t+h)/2f),img);}
     private void panel(Canvas c,float l,float t,float r,float b,int color){p.setStyle(Paint.Style.FILL);p.setColor(color);c.drawRoundRect(l,t,r,b,18,18,p);}
     private void button(Canvas c,float l,float t,float r,float b,String s,int color){p.setStyle(Paint.Style.FILL);p.setColor(color);c.drawRoundRect(l,t,r,b,15,15,p);text(c,s,(l+r)/2f,t+(b-t)/2f+8,20,true,true);}
@@ -145,41 +81,8 @@ public class TankGameView extends View {
     private void background(Canvas c){c.drawColor(Color.rgb(18,22,25));}
     private int clamp(int v,int a,int b){return Math.max(a,Math.min(b,v));}
 
-    @Override public boolean onTouchEvent(MotionEvent e){
-        float sx=VW/(float)getWidth(),sy=VH/(float)getHeight();float x=e.getX()*sx,y=e.getY()*sy;
-        if(e.getAction()==MotionEvent.ACTION_DOWN||e.getAction()==MotionEvent.ACTION_MOVE){
-            if(buildMode){
-                if(y>=165&&y<=245&&x>=915&&x<=1215){selected=TankType.MS1;setDefaultHeadAngle();resetBattle();}
-                else if(y>=265&&y<=345&&x>=915&&x<=1215){if(kv2Owned){selected=TankType.KV2;setDefaultHeadAngle();resetBattle();}else if(coins>=KV2_PRICE){coins-=KV2_PRICE;kv2Owned=true;selected=TankType.KV2;setDefaultHeadAngle();save();resetBattle();}}
-            }else{
-                left=x<115&&y>570;right=x>=115&&x<220&&y>570;up=x>=220&&x<325&&y>570;down=x>=325&&x<425&&y>570;
-                if(x>=1080&&y>570)fire();
-            }
-            return true;
-        }
-        if(e.getAction()==MotionEvent.ACTION_UP){
-            left=right=up=down=false;
-            if(buildMode){
-                if(x>=900&&x<1065&&y>=605){buildMode=false;resetBattle();}
-                else if(x>=1080&&y>=605){resetAll();}
-            }else{
-                if(x>=875&&x<1060&&y>=585){buildMode=true;}
-                else if(x>=490&&x<=790&&y>=390&&y<=465){if(won)nextLevel();else if(lost)resetBattle();}
-            }
-            return true;
-        }
-        return true;
-    }
+    @Override public boolean onTouchEvent(MotionEvent e){float sx=VW/(float)getWidth(),sy=VH/(float)getHeight(),x=e.getX()*sx,y=e.getY()*sy;if(e.getAction()==MotionEvent.ACTION_DOWN||e.getAction()==MotionEvent.ACTION_MOVE){if(buildMode){if(y>=165&&y<=245&&x>=915&&x<=1215){selected=TankType.MS1;setDefaultHeadAngle();resetBattle();}else if(y>=265&&y<=345&&x>=915&&x<=1215){if(kv2Owned){selected=TankType.KV2;setDefaultHeadAngle();resetBattle();}else if(coins>=KV2_PRICE){coins-=KV2_PRICE;kv2Owned=true;selected=TankType.KV2;setDefaultHeadAngle();save();resetBattle();}}}else{left=x<115&&y>570;right=x>=115&&x<220&&y>570;up=x>=220&&x<325&&y>570;down=x>=325&&x<425&&y>570;if(x>=1080&&y>570)fire();}return true;}if(e.getAction()==MotionEvent.ACTION_UP){left=right=up=down=false;if(buildMode){if(x>=900&&x<1065&&y>=605){buildMode=false;resetBattle();}else if(x>=1080&&y>=605)resetAll();}else{if(x>=875&&x<1060&&y>=585)buildMode=true;else if(x>=490&&x<=790&&y>=390&&y<=465){if(won)nextLevel();else if(lost)resetBattle();}}return true;}return true;}
 
     private enum TankType{MS1,KV2}
-
-    private static class Shot{
-        float x,y,tx,ty,speed=1200;boolean player;int damage;
-        Shot(float x,float y,float tx,float ty,boolean player,int damage){this.x=x;this.y=y;this.tx=tx;this.ty=ty;this.player=player;this.damage=damage;}
-        void update(float dt){float dx=tx-x,dy=ty-y,d=(float)Math.sqrt(dx*dx+dy*dy);if(d>1){x+=dx/d*speed*dt;y+=dy/d*speed*dt;}}
-        boolean off(){return x<-300||x>4500||y<-300||y>900;}
-        boolean hit(TankGameView g){float ex=g.enemyX,ey=g.terrainY(ex)-120,px=g.tankX,py=g.terrainY(px)-100;float d=player?dist(x,y,ex,ey):dist(x,y,px,py);return d<85;}
-        void draw(Canvas c){Paint q=new Paint(Paint.ANTI_ALIAS_FLAG);q.setColor(player?Color.YELLOW:Color.RED);q.setStyle(Paint.Style.FILL);c.drawCircle(x,y,12,q);}
-        private static float dist(float a,float b,float c,float d){float x=a-c,y=b-d;return(float)Math.sqrt(x*x+y*y);}
-    }
+    private static class Shot{float x,y,tx,ty,speed=1200;boolean player;int damage;Shot(float x,float y,float tx,float ty,boolean player,int damage){this.x=x;this.y=y;this.tx=tx;this.ty=ty;this.player=player;this.damage=damage;}void update(float dt){float dx=tx-x,dy=ty-y,d=(float)Math.sqrt(dx*dx+dy*dy);if(d>1){x+=dx/d*speed*dt;y+=dy/d*speed*dt;}}boolean off(){return x<-300||x>4500||y<-300||y>900;}boolean hit(TankGameView g){float ex=g.enemyX,ey=g.terrainY(ex)-120,px=g.tankX,py=g.terrainY(px)-100;return dist(x,y,g.player?0:0,0)<0?false:(player?dist(x,y,ex,ey):dist(x,y,px,py))<85;}void draw(Canvas c){Paint q=new Paint(Paint.ANTI_ALIAS_FLAG);q.setColor(player?Color.YELLOW:Color.RED);q.setStyle(Paint.Style.FILL);c.drawCircle(x,y,12,q);}private static float dist(float a,float b,float c,float d){float x=a-c,y=b-d;return(float)Math.sqrt(x*x+y*y);}}
 }
